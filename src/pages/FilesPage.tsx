@@ -17,7 +17,7 @@ const FileCard: React.FC<{ file: SharedFile; canDelete: boolean; onDelete: () =>
     const isImage = file.category === 'image'
     return (
         <div className="card flex items-center gap-3 p-4">
-            <div className={cn('flex h-12 w-12 items-center justify-center rounded-[1.1rem] flex-shrink-0', isImage ? 'bg-brand-500/14' : 'bg-[#201f1f]')}>
+            <div className={cn('flex h-12 w-12 items-center justify-center rounded-[1.1rem] flex-shrink-0', isImage ? 'bg-brand-500/14' : 'bg-surface-500')}>
                 {isImage ? <Image className="w-5 h-5 text-brand-300" /> : <FileText className="w-5 h-5 text-gray-400" />}
             </div>
             <div className="min-w-0 flex-1">
@@ -122,10 +122,10 @@ const FilesPage: React.FC = () => {
                 <div className="space-y-3">
                     {Array.from({ length: 4 }).map((_, index) => (
                         <div key={index} className="card p-4 animate-pulse flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-[1.1rem] bg-[#201f1f]" />
+                            <div className="w-12 h-12 rounded-[1.1rem] bg-surface-500" />
                             <div className="flex-1 space-y-2">
-                                <div className="h-4 w-2/3 rounded bg-[#201f1f]" />
-                                <div className="h-3 w-1/3 rounded bg-[#201f1f]" />
+                                <div className="h-4 w-2/3 rounded bg-surface-500" />
+                                <div className="h-3 w-1/3 rounded bg-surface-500" />
                             </div>
                         </div>
                     ))}

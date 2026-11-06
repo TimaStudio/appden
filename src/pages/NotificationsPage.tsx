@@ -172,7 +172,7 @@ const NotificationRow: React.FC<{ notification: AppNotification; onOpen: () => v
                 dragConstraints={{ left: 0, right: 0 }}
                 dragElastic={{ left: 0.9, right: 0 }}
                 onDragEnd={handleDragEnd}
-                className={cn('group relative flex touch-pan-y items-start gap-3 bg-[#141416] px-4 py-3.5', !notification.read && 'bg-[#171a22]')}
+                className={cn('group relative flex touch-pan-y items-start gap-3 bg-surface-700 px-4 py-3.5', !notification.read && 'bg-brand-500/10')}
             >
                 <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-start gap-3 text-left">
                     <span className={cn('mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl', style.tone)}>

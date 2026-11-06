@@ -1,9 +1,9 @@
-﻿import React, { useEffect, useMemo, useState } from 'react'
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Edit3, Globe2, History, RotateCcw, Save, ShieldCheck, Sparkles } from 'lucide-react'
+import { BadgeCheck, CheckCircle2, Edit3, FileText, Globe2, History, Mic2, RotateCcw, Save, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { usePlayerStore } from '@app/store/player.store'
 import { useToast } from '@components/ui/Toast'
-import { formatRelative } from '@lib/utils'
+import { cn, formatRelative } from '@lib/utils'
 import { lyricsService } from '@services/lyrics.service'
 import type { Song, TranslationLanguage } from '@/types'
 
@@ -13,20 +13,36 @@ interface LyricsPanelProps {
     canEdit: boolean
 }
 
-type LyricsTab = 'viewer' | 'editor' | 'proposals' | 'versions'
+type LyricsPanelMode = 'view' | 'edit' | 'proposals' | 'versions'
+type Language = 'original' | TranslationLanguage
+
+const LANGUAGES: Array<{ id: Language; label: string }> = [
+    { id: 'original', label: 'Original' },
+    { id: 'es', label: 'ES' },
+    { id: 'en', label: 'EN' },
+]
+
+const PROPOSAL_STATUS: Record<string, { label: string; className: string }> = {
+    pending: { label: 'Pendiente', className: 'border-amber-400/30 bg-amber-400/10 text-amber-200' },
+    approved: { label: 'Aprobada', className: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200' },
+    rejected: { label: 'Rechazada', className: 'border-red-400/30 bg-red-400/10 text-red-200' },
+}
 
 export const LyricsPanel: React.FC<LyricsPanelProps> = ({ song, userId, canEdit }) => {
     const { success, error: toastError } = useToast()
     const queryClient = useQueryClient()
     const currentSong = usePlayerStore((state) => state.currentSong)
     const currentTime = usePlayerStore((state) => state.currentTime)
+    const setQueue = usePlayerStore((state) => state.setQueue)
+    const setCurrentTime = usePlayerStore((state) => state.setCurrentTime)
+    const setPlaying = usePlayerStore((state) => state.setPlaying)
 
-    const [activeTab, setActiveTab] = useState<LyricsTab>('viewer')
-    const [isEditing, setIsEditing] = useState(false)
+    const [mode, setMode] = useState<LyricsPanelMode>('view')
     const [draft, setDraft] = useState('')
     const [proposalDraft, setProposalDraft] = useState('')
     const [proposalNote, setProposalNote] = useState('')
-    const [selectedLanguage, setSelectedLanguage] = useState<'original' | TranslationLanguage>('original')
+    const [language, setLanguage] = useState<Language>('original')
+    const linesRef = useRef<HTMLDivElement | null>(null)
 
     const { data: lyrics, isLoading } = useQuery({
         queryKey: ['song-lyrics', song.id],
@@ -34,428 +50,424 @@ export const LyricsPanel: React.FC<LyricsPanelProps> = ({ song, userId, canEdit 
         enabled: !!song.id,
     })
 
+    // Proposals and history are only needed by the author (badge) or once their panel is open.
     const { data: proposals } = useQuery({
         queryKey: ['song-lyrics-proposals', song.id],
         queryFn: () => lyricsService.listProposals(song.id),
-        enabled: !!song.id,
+        enabled: !!song.id && (canEdit || mode === 'proposals'),
     })
 
     const { data: versions } = useQuery({
         queryKey: ['song-lyrics-versions', song.id],
         queryFn: () => lyricsService.listVersions(song.id),
-        enabled: !!song.id,
+        enabled: !!song.id && mode === 'versions',
     })
 
-    const { data: translation } = useQuery({
-        queryKey: ['song-lyrics-translation', song.id, selectedLanguage],
-        queryFn: () => lyricsService.getTranslation(song.id, selectedLanguage as TranslationLanguage),
-        enabled: !!song.id && selectedLanguage !== 'original',
+    const { data: translation, isLoading: translationLoading } = useQuery({
+        queryKey: ['song-lyrics-translation', song.id, language],
+        queryFn: () => lyricsService.getTranslation(song.id, language as TranslationLanguage),
+        enabled: !!song.id && language !== 'original',
     })
 
     useEffect(() => {
-        if (isEditing) return
+        if (mode === 'edit') return
         setDraft(lyrics?.raw_text ?? '')
-    }, [lyrics?.raw_text, isEditing])
+    }, [lyrics?.raw_text, mode])
 
     useEffect(() => {
         if (proposalDraft.trim()) return
         setProposalDraft(lyrics?.raw_text ?? lyricsService.buildAutoDraft())
     }, [lyrics?.raw_text, proposalDraft, song])
 
+    const refresh = () =>
+        Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['song-lyrics', song.id] }),
+            queryClient.invalidateQueries({ queryKey: ['song-lyrics-proposals', song.id] }),
+            queryClient.invalidateQueries({ queryKey: ['song-lyrics-versions', song.id] }),
+            queryClient.invalidateQueries({ queryKey: ['song-lyrics-translation', song.id] }),
+        ])
+
     const saveMutation = useMutation({
-        mutationFn: async () => {
-            return lyricsService.saveLyrics({
-                songId: song.id,
-                userId,
-                rawText: draft,
-                source: 'manual',
-                isAutoGenerated: false,
-            })
-        },
+        mutationFn: () => lyricsService.saveLyrics({ songId: song.id, userId, rawText: draft, source: 'manual', isAutoGenerated: false }),
         onSuccess: () => {
-            success('Letras guardadas', 'Cambios aplicados correctamente.')
-            setIsEditing(false)
-            void invalidateLyricsQueries(queryClient, song.id)
+            success('Letra guardada')
+            setMode('view')
+            void refresh()
         },
-        onError: () => {
-            toastError('Error', 'No se pudieron guardar las letras.')
-        },
+        onError: () => toastError('No se pudo guardar la letra'),
     })
 
     const proposalMutation = useMutation({
-        mutationFn: async () => {
-            return lyricsService.submitProposal(song.id, userId, proposalDraft, proposalNote)
-        },
+        mutationFn: () => lyricsService.submitProposal(song.id, userId, proposalDraft, proposalNote),
         onSuccess: () => {
-            success('Propuesta enviada', 'El autor puede revisarla y aprobarla.')
+            success('Propuesta enviada', 'El autor podrá revisarla.')
             setProposalNote('')
+            setMode('view')
             void queryClient.invalidateQueries({ queryKey: ['song-lyrics-proposals', song.id] })
         },
-        onError: () => {
-            toastError('Error', 'No se pudo enviar la propuesta.')
-        },
+        onError: () => toastError('No se pudo enviar la propuesta'),
     })
 
-    const reviewProposalMutation = useMutation({
-        mutationFn: async ({ proposalId, action }: { proposalId: string; action: 'approved' | 'rejected' }) => {
-            return lyricsService.reviewProposal(proposalId, userId, action)
-        },
+    const reviewMutation = useMutation({
+        mutationFn: ({ proposalId, action }: { proposalId: string; action: 'approved' | 'rejected' }) =>
+            lyricsService.reviewProposal(proposalId, userId, action),
         onSuccess: () => {
-            success('Revision aplicada')
-            void invalidateLyricsQueries(queryClient, song.id)
+            success('Propuesta revisada')
+            void refresh()
         },
-        onError: () => {
-            toastError('Error', 'No se pudo revisar la propuesta.')
-        },
+        onError: () => toastError('No se pudo revisar la propuesta'),
     })
 
     const rollbackMutation = useMutation({
-        mutationFn: async (versionId: string) => lyricsService.rollbackToVersion(song.id, versionId, userId),
+        mutationFn: (versionId: string) => lyricsService.rollbackToVersion(song.id, versionId, userId),
         onSuccess: () => {
-            success('Rollback aplicado', 'Version restaurada correctamente.')
-            void invalidateLyricsQueries(queryClient, song.id)
+            success('Versión restaurada')
+            void refresh()
         },
-        onError: () => {
-            toastError('Error', 'No se pudo restaurar la version.')
-        },
+        onError: () => toastError('No se pudo restaurar la versión'),
     })
 
     const verifyMutation = useMutation({
-        mutationFn: async (verified: boolean) => lyricsService.setVerified(song.id, userId, verified),
+        mutationFn: (verified: boolean) => lyricsService.setVerified(song.id, userId, verified),
         onSuccess: (_, verified) => {
-            success(verified ? 'Letra verificada' : 'Verificacion removida')
+            success(verified ? 'Letra verificada' : 'Verificación quitada')
             void queryClient.invalidateQueries({ queryKey: ['song-lyrics', song.id] })
         },
-        onError: () => toastError('Error', 'No se pudo actualizar verificacion.'),
+        onError: () => toastError('No se pudo actualizar la verificación'),
     })
 
     const translateMutation = useMutation({
-        mutationFn: async (language: TranslationLanguage) => {
+        mutationFn: async (target: TranslationLanguage) => {
             const baseText = lyrics?.raw_text ?? ''
             if (!baseText.trim()) throw new Error('empty-lyrics')
-            return lyricsService.translateLyrics(song.id, userId, language, baseText)
+            return lyricsService.translateLyrics(song.id, userId, target, baseText)
         },
-        onSuccess: (_data, language) => {
-            success('Traduccion lista', `Version ${language.toUpperCase()} disponible.`)
-            setSelectedLanguage(language)
-            void queryClient.invalidateQueries({ queryKey: ['song-lyrics-translation', song.id, language] })
+        onSuccess: (_data, target) => {
+            success('Traducción lista')
+            setLanguage(target)
+            void queryClient.invalidateQueries({ queryKey: ['song-lyrics-translation', song.id, target] })
         },
         onError: (err) => {
-            if (err instanceof Error && err.message === 'empty-lyrics') {
-                toastError('Error', 'Primero necesitas letras originales.')
-                return
-            }
-            toastError('Error', 'No se pudo traducir la letra.')
+            toastError(err instanceof Error && err.message === 'empty-lyrics' ? 'Primero necesitas la letra original' : 'No se pudo traducir la letra')
         },
     })
 
-    const sourceText = selectedLanguage === 'original' ? (lyrics?.raw_text ?? '') : (translation?.raw_text ?? '')
+    const sourceText = language === 'original' ? (lyrics?.raw_text ?? '') : (translation?.raw_text ?? '')
 
-    const renderedLines = useMemo(() => {
-        if (selectedLanguage === 'original' && lyrics?.lines && lyrics.lines.length > 0) return lyrics.lines
+    const lines = useMemo(() => {
+        if (language === 'original' && lyrics?.lines && lyrics.lines.length > 0) return lyrics.lines
         if (!sourceText.trim()) return []
         return lyricsService.parseTimedLyrics(song.id, sourceText)
-    }, [lyrics?.lines, selectedLanguage, song.id, sourceText])
+    }, [lyrics?.lines, language, song.id, sourceText])
 
-    const previewLines = useMemo(
-        () => lyricsService.parseTimedLyrics(song.id, draft),
-        [song.id, draft]
-    )
+    const previewLines = useMemo(() => lyricsService.parseTimedLyrics(song.id, draft), [song.id, draft])
+    const isTimed = lines.some((line) => line.start_seconds != null)
+    const isCurrent = currentSong?.id === song.id
 
-    const activeLineIndex = useMemo(() => {
-        if (currentSong?.id !== song.id || renderedLines.length === 0) return -1
-
-        return renderedLines.findIndex((line, index) => {
+    const activeIndex = useMemo(() => {
+        if (!isCurrent || !isTimed) return -1
+        return lines.findIndex((line, index) => {
             const start = line.start_seconds
             if (start == null) return false
-            const next = renderedLines[index + 1]?.start_seconds ?? null
+            const next = lines[index + 1]?.start_seconds ?? null
             const end = line.end_seconds ?? next ?? start + 4
             return currentTime >= start && currentTime < end
         })
-    }, [currentSong?.id, currentTime, renderedLines, song.id])
+    }, [isCurrent, isTimed, currentTime, lines])
 
-    if (isLoading) {
-        return <div className="card p-4 text-sm text-gray-400">Cargando letras...</div>
+    // Keep the sung line centred inside the lyrics box (never scrolls the page itself).
+    useEffect(() => {
+        const box = linesRef.current
+        if (!box || activeIndex < 0) return
+        const line = box.querySelector<HTMLElement>(`[data-line="${activeIndex}"]`)
+        if (!line) return
+        box.scrollTo({ top: line.offsetTop - box.clientHeight / 2 + line.clientHeight / 2, behavior: 'smooth' })
+    }, [activeIndex])
+
+    const seekTo = (seconds: number | null | undefined) => {
+        if (seconds == null) return
+        if (!isCurrent) {
+            setQueue([song], 0)
+            window.setTimeout(() => {
+                setCurrentTime(seconds)
+                setPlaying(true)
+            }, 220)
+            return
+        }
+        setCurrentTime(seconds)
+        setPlaying(true)
     }
 
+    const pendingCount = (proposals ?? []).filter((proposal) => proposal.status === 'pending').length
+    const verified = lyrics?.is_verified ?? false
+    const hasLyrics = !!lyrics?.raw_text?.trim()
+
+    const modes: Array<{ id: LyricsPanelMode; label: string; icon: React.ReactNode; badge?: number }> = [
+        { id: 'edit', label: canEdit ? 'Editar' : 'Proponer cambios', icon: <Edit3 className="h-3.5 w-3.5" /> },
+        ...(canEdit ? [{ id: 'proposals' as const, label: 'Propuestas', icon: <FileText className="h-3.5 w-3.5" />, badge: pendingCount }] : []),
+        { id: 'versions', label: 'Historial', icon: <History className="h-3.5 w-3.5" /> },
+    ]
+
     return (
-        <section className="card p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                    <h2 className="text-base font-semibold text-white">Letras</h2>
-                    <p className="text-xs text-gray-400">
-                        {lyrics?.is_verified ? 'Verificada por autor' : 'No verificada'} · {lyrics?.is_auto_generated ? 'ASR auto' : 'Manual'}
-                    </p>
+        <section aria-labelledby="song-lyrics-title" className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <div className="flex items-center gap-2.5">
+                    <h2 id="song-lyrics-title" className="section-title">
+                        Letra
+                    </h2>
+                    {verified ? (
+                        <span className="badge-brand" title="Verificada por el autor">
+                            <BadgeCheck className="h-3.5 w-3.5" />
+                            Verificada
+                        </span>
+                    ) : null}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                    <select
-                        value={selectedLanguage}
-                        onChange={(event) => setSelectedLanguage(event.target.value as 'original' | TranslationLanguage)}
-                        className="bg-surface-700 border border-surface-500 text-xs rounded-lg px-2.5 py-2"
-                    >
-                        <option value="original">Original</option>
-                        <option value="es">ES</option>
-                        <option value="en">EN</option>
-                    </select>
 
-                    <button
-                        type="button"
-                        onClick={() => translateMutation.mutate(selectedLanguage === 'en' ? 'es' : 'en')}
-                        className="btn-secondary px-3 py-2 text-xs"
-                        disabled={translateMutation.isPending}
-                    >
-                        <Globe2 className="w-3.5 h-3.5" />
-                        Traducir
-                    </button>
+                {hasLyrics ? (
+                    <div className="tab-strip !p-0.5" role="group" aria-label="Idioma de la letra">
+                        {LANGUAGES.map((item) => (
+                            <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => setLanguage(item.id)}
+                                aria-pressed={language === item.id}
+                                className={cn(
+                                    'min-w-[3rem] rounded-full px-3 py-1.5 text-xs font-bold transition-colors',
+                                    language === item.id ? 'bg-brand-500 text-on-brand' : 'text-gray-400 hover:text-white'
+                                )}
+                            >
+                                {item.label}
+                            </button>
+                        ))}
+                    </div>
+                ) : null}
+            </div>
 
-                    {canEdit ? (
+            <div className="card overflow-hidden">
+                {mode === 'view' ? (
+                    isLoading ? (
+                        <div className="space-y-3 p-6" aria-busy="true">
+                            {[70, 52, 84, 60].map((width) => (
+                                <div key={width} className="skeleton-shimmer h-5 rounded-full" style={{ width: `${width}%` }} />
+                            ))}
+                        </div>
+                    ) : lines.length > 0 ? (
+                        <div
+                            ref={linesRef}
+                            className="no-scrollbar relative max-h-[26rem] overflow-y-auto px-5 py-7 text-center sm:px-8"
+                            style={{ maskImage: 'linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%)', WebkitMaskImage: 'linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%)' }}
+                        >
+                            {lines.map((line, index) => {
+                                const active = index === activeIndex
+                                const timed = line.start_seconds != null
+                                const Tag = timed ? 'button' : 'p'
+                                return (
+                                    <Tag
+                                        key={line.id ?? `${line.song_id}-${line.line_index}-${index}`}
+                                        data-line={index}
+                                        {...(timed ? { type: 'button' as const, onClick: () => seekTo(line.start_seconds) } : {})}
+                                        className={cn(
+                                            'block w-full origin-center text-balance py-1.5 font-headline text-xl font-bold leading-snug transition-[color,transform,opacity] duration-300 sm:text-2xl',
+                                            timed ? 'cursor-pointer hover:text-white/80' : '',
+                                            active ? 'scale-[1.04] text-white' : isTimed && isCurrent ? 'text-white/35' : 'text-white/80'
+                                        )}
+                                    >
+                                        {line.content || ' '}
+                                    </Tag>
+                                )
+                            })}
+                        </div>
+                    ) : language !== 'original' && !translationLoading && hasLyrics ? (
+                        <EmptyBlock
+                            icon={<Globe2 className="h-6 w-6" />}
+                            title={`Aún no hay traducción a ${language.toUpperCase()}`}
+                            action={
+                                <button type="button" className="btn-primary !min-h-[2.5rem] !px-4 text-sm" disabled={translateMutation.isPending} onClick={() => translateMutation.mutate(language as TranslationLanguage)}>
+                                    <Sparkles className="h-4 w-4" />
+                                    {translateMutation.isPending ? 'Traduciendo…' : `Traducir a ${language.toUpperCase()}`}
+                                </button>
+                            }
+                        />
+                    ) : (
+                        <EmptyBlock
+                            icon={<Mic2 className="h-6 w-6" />}
+                            title="Todavía no hay letra"
+                            description={canEdit ? 'Escríbela tú: puedes añadir marcas de tiempo para el modo karaoke.' : 'Si te la sabes, propón una al autor.'}
+                            action={
+                                <button type="button" className="btn-secondary !min-h-[2.5rem] text-sm" onClick={() => setMode('edit')}>
+                                    <Edit3 className="h-4 w-4" />
+                                    {canEdit ? 'Escribir letra' : 'Proponer letra'}
+                                </button>
+                            }
+                        />
+                    )
+                ) : null}
+
+                {mode === 'edit' ? (
+                    <div className="space-y-3 p-4 sm:p-5">
+                        {canEdit ? (
+                            <>
+                                <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                        <textarea
+                                            value={draft}
+                                            onChange={(event) => setDraft(event.target.value)}
+                                            rows={12}
+                                            className="input min-h-[16rem] font-mono text-xs leading-6"
+                                            placeholder="[00:12.00] Primera línea"
+                                        />
+                                        <p className="text-[11px] text-gray-500">Formato opcional con tiempos: [mm:ss.xx] texto</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-black/20 p-3">
+                                        <p className="mb-2 text-xs font-semibold text-gray-400">Vista previa</p>
+                                        <div className="no-scrollbar max-h-[15rem] space-y-1 overflow-y-auto">
+                                            {previewLines.length === 0 ? <p className="text-sm text-gray-600">Aquí verás cómo queda.</p> : null}
+                                            {previewLines.map((line, index) => (
+                                                <p key={line.id ?? index} className="text-sm text-gray-200">
+                                                    {line.content}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <button type="button" className="btn-ghost !px-3 text-xs" onClick={() => setDraft(lyricsService.buildAutoDraft())}>
+                                        <Sparkles className="h-3.5 w-3.5" />
+                                        Plantilla base
+                                    </button>
+                                    <div className="flex gap-2">
+                                        <button type="button" className="btn-secondary !px-4 text-sm" onClick={() => setMode('view')}>
+                                            Cancelar
+                                        </button>
+                                        <button type="button" className="btn-primary !px-5 text-sm" disabled={saveMutation.isPending || !draft.trim()} onClick={() => saveMutation.mutate()}>
+                                            <Save className="h-4 w-4" />
+                                            Guardar
+                                        </button>
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <p className="text-sm text-gray-300">Escribe cómo crees que debería quedar. El autor decide si la aplica.</p>
+                                <textarea
+                                    value={proposalDraft}
+                                    onChange={(event) => setProposalDraft(event.target.value)}
+                                    rows={10}
+                                    className="input min-h-[14rem] font-mono text-xs leading-6"
+                                />
+                                <input value={proposalNote} onChange={(event) => setProposalNote(event.target.value)} className="input" placeholder="Nota para el autor (opcional)" />
+                                <div className="flex justify-end gap-2">
+                                    <button type="button" className="btn-secondary !px-4 text-sm" onClick={() => setMode('view')}>
+                                        Cancelar
+                                    </button>
+                                    <button type="button" className="btn-primary !px-5 text-sm" disabled={proposalMutation.isPending || !proposalDraft.trim()} onClick={() => proposalMutation.mutate()}>
+                                        <CheckCircle2 className="h-4 w-4" />
+                                        Enviar propuesta
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                ) : null}
+
+                {mode === 'proposals' ? (
+                    <div className="space-y-2.5 p-4 sm:p-5">
+                        {(proposals ?? []).length === 0 ? (
+                            <p className="py-6 text-center text-sm text-gray-500">No hay propuestas.</p>
+                        ) : (
+                            (proposals ?? []).map((proposal) => {
+                                const status = PROPOSAL_STATUS[proposal.status] ?? PROPOSAL_STATUS.pending
+                                return (
+                                    <article key={proposal.id} className="space-y-2 rounded-2xl bg-black/20 p-3.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <p className="text-xs text-gray-400">
+                                                {proposal.proposer?.display_name ?? 'Miembro'} · {formatRelative(proposal.created_at)}
+                                            </p>
+                                            <span className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', status.className)}>{status.label}</span>
+                                        </div>
+                                        {proposal.note ? <p className="text-sm text-gray-300">“{proposal.note}”</p> : null}
+                                        <pre className="no-scrollbar max-h-40 overflow-y-auto whitespace-pre-wrap rounded-xl bg-black/25 p-3 font-sans text-[13px] leading-relaxed text-gray-200">{proposal.proposed_raw_text}</pre>
+                                        {canEdit && proposal.status === 'pending' ? (
+                                            <div className="flex gap-2">
+                                                <button type="button" className="btn-primary !min-h-[2.25rem] !px-4 text-xs" onClick={() => reviewMutation.mutate({ proposalId: proposal.id, action: 'approved' })}>
+                                                    Aprobar
+                                                </button>
+                                                <button type="button" className="btn-secondary !min-h-[2.25rem] !px-4 text-xs" onClick={() => reviewMutation.mutate({ proposalId: proposal.id, action: 'rejected' })}>
+                                                    Rechazar
+                                                </button>
+                                            </div>
+                                        ) : null}
+                                    </article>
+                                )
+                            })
+                        )}
+                    </div>
+                ) : null}
+
+                {mode === 'versions' ? (
+                    <div className="space-y-2.5 p-4 sm:p-5">
+                        {(versions ?? []).length === 0 ? (
+                            <p className="py-6 text-center text-sm text-gray-500">Aún no hay versiones anteriores.</p>
+                        ) : (
+                            (versions ?? []).map((version) => (
+                                <article key={version.id} className="rounded-2xl bg-black/20 p-3.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <p className="flex items-center gap-2 text-xs font-semibold text-gray-300">
+                                            <History className="h-3.5 w-3.5" />v{version.version_number} · {formatRelative(version.created_at)}
+                                        </p>
+                                        {canEdit ? (
+                                            <button type="button" className="btn-secondary !min-h-[2rem] !px-3 text-xs" disabled={rollbackMutation.isPending} onClick={() => rollbackMutation.mutate(version.id)}>
+                                                <RotateCcw className="h-3.5 w-3.5" />
+                                                Restaurar
+                                            </button>
+                                        ) : null}
+                                    </div>
+                                    <pre className="no-scrollbar mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap rounded-xl bg-black/25 p-3 font-sans text-[13px] leading-relaxed text-gray-200">{version.raw_text}</pre>
+                                </article>
+                            ))
+                        )}
+                    </div>
+                ) : null}
+
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-white/[0.06] px-3 py-2.5">
+                    {mode !== 'view' ? (
+                        <button type="button" className="chip !min-h-[2rem] !text-xs" onClick={() => setMode('view')}>
+                            <X className="h-3.5 w-3.5" />
+                            Cerrar
+                        </button>
+                    ) : (
+                        modes.map((item) => (
+                            <button key={item.id} type="button" className="chip !min-h-[2rem] !text-xs" onClick={() => setMode(item.id)}>
+                                {item.icon}
+                                {item.label}
+                                {item.badge ? <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">{item.badge}</span> : null}
+                            </button>
+                        ))
+                    )}
+                    {canEdit && mode === 'view' && hasLyrics ? (
                         <button
                             type="button"
-                            onClick={() => verifyMutation.mutate(!(lyrics?.is_verified ?? false))}
-                            className={`btn-secondary px-3 py-2 text-xs ${(lyrics?.is_verified ?? false) ? 'border-emerald-400/50 text-emerald-300' : ''}`}
+                            className={cn('chip !min-h-[2rem] !text-xs ml-auto', verified && '!border-emerald-400/30 !text-emerald-200')}
                             disabled={verifyMutation.isPending}
+                            onClick={() => verifyMutation.mutate(!verified)}
                         >
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                            {(lyrics?.is_verified ?? false) ? 'Quitar verificacion' : 'Verificar'}
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            {verified ? 'Quitar verificación' : 'Verificar'}
                         </button>
                     ) : null}
                 </div>
             </div>
-
-            <div className="flex gap-2 overflow-x-auto no-scrollbar">
-                <TabButton active={activeTab === 'viewer'} onClick={() => setActiveTab('viewer')} label="Karaoke" />
-                <TabButton active={activeTab === 'editor'} onClick={() => setActiveTab('editor')} label="Editor" />
-                <TabButton active={activeTab === 'proposals'} onClick={() => setActiveTab('proposals')} label="Propuestas" />
-                <TabButton active={activeTab === 'versions'} onClick={() => setActiveTab('versions')} label="Versiones" />
-            </div>
-
-            {activeTab === 'viewer' ? (
-                renderedLines.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-surface-400 p-6 text-center text-sm text-gray-400">
-                        No hay letras todavia para esta cancion.
-                    </div>
-                ) : (
-                    <div className="max-h-[360px] overflow-y-auto no-scrollbar pr-1 space-y-1.5">
-                        {renderedLines.map((line, idx) => (
-                            <p
-                                key={line.id ?? `${line.song_id}-${line.line_index}-${idx}`}
-                                className={`rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
-                                    idx === activeLineIndex
-                                        ? 'bg-brand-500/20 text-brand-100 border border-brand-400/40'
-                                        : 'text-gray-200'
-                                }`}
-                            >
-                                {line.content}
-                            </p>
-                        ))}
-                    </div>
-                )
-            ) : null}
-
-            {activeTab === 'editor' ? (
-                canEdit ? (
-                    <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const generated = lyricsService.buildAutoDraft()
-                                    setDraft(generated)
-                                    setIsEditing(true)
-                                }}
-                                className="btn-secondary px-3 py-2 text-xs"
-                            >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                Generar base
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setIsEditing((prev) => !prev)}
-                                className="btn-secondary px-3 py-2 text-xs"
-                            >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                {isEditing ? 'Cerrar editor' : 'Editar'}
-                            </button>
-                        </div>
-
-                        {isEditing ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <div className="space-y-2">
-                                    <textarea
-                                        value={draft}
-                                        onChange={(event) => setDraft(event.target.value)}
-                                        rows={14}
-                                        className="input min-h-[280px] font-mono text-xs leading-6"
-                                        placeholder="[00:00.00] Primera linea"
-                                    />
-                                    <div className="flex items-center justify-between gap-2">
-                                        <p className="text-[11px] text-gray-500">Formato: [mm:ss.xx] texto</p>
-                                        <button
-                                            type="button"
-                                            onClick={() => saveMutation.mutate()}
-                                            disabled={saveMutation.isPending || !draft.trim()}
-                                            className="btn-primary px-3 py-2 text-xs"
-                                        >
-                                            <Save className="w-3.5 h-3.5" /> Guardar
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="rounded-xl border border-surface-500 bg-surface-700/40 p-2.5">
-                                    <p className="text-xs text-gray-400 mb-2">Vista previa en tiempo real</p>
-                                    <div className="max-h-[300px] overflow-y-auto no-scrollbar space-y-1.5 pr-1">
-                                        {previewLines.map((line, idx) => {
-                                            const isActivePreview = activeLineIndex === idx
-                                            return (
-                                                <p
-                                                    key={line.id ?? `${idx}`}
-                                                    className={`rounded-md px-2 py-1.5 text-sm ${
-                                                        isActivePreview ? 'bg-brand-500/20 text-brand-100' : 'text-gray-200'
-                                                    }`}
-                                                >
-                                                    {line.content}
-                                                </p>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-                    </div>
-                ) : (
-                    <div className="space-y-3">
-                        <p className="text-sm text-gray-300">No eres el autor. Puedes enviar una propuesta de edicion.</p>
-                        <textarea
-                            value={proposalDraft}
-                            onChange={(event) => setProposalDraft(event.target.value)}
-                            rows={12}
-                            className="input min-h-[220px] font-mono text-xs leading-6"
-                            placeholder="Propone aqui una version mejorada"
-                        />
-                        <input
-                            value={proposalNote}
-                            onChange={(event) => setProposalNote(event.target.value)}
-                            className="input"
-                            placeholder="Nota para el autor (opcional)"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => proposalMutation.mutate()}
-                            disabled={proposalMutation.isPending || !proposalDraft.trim()}
-                            className="btn-primary px-3 py-2 text-xs"
-                        >
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Enviar propuesta
-                        </button>
-                    </div>
-                )
-            ) : null}
-
-            {activeTab === 'proposals' ? (
-                <div className="space-y-2.5">
-                    {(proposals ?? []).length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-surface-400 p-5 text-sm text-gray-400 text-center">
-                            No hay propuestas pendientes.
-                        </div>
-                    ) : (
-                        (proposals ?? []).map((proposal) => (
-                            <article key={proposal.id} className="rounded-xl border border-surface-500 bg-surface-700/40 p-3 space-y-2">
-                                <div className="flex items-center justify-between gap-2">
-                                    <p className="text-xs text-gray-400">
-                                        {proposal.proposer?.display_name ?? 'Miembro'} · {formatRelative(proposal.created_at)}
-                                    </p>
-                                    <span className={`text-[11px] px-2 py-1 rounded-full border ${
-                                        proposal.status === 'approved'
-                                            ? 'border-emerald-500/40 text-emerald-300'
-                                            : proposal.status === 'rejected'
-                                                ? 'border-red-500/40 text-red-300'
-                                                : 'border-amber-500/40 text-amber-300'
-                                    }`}>
-                                        {proposal.status}
-                                    </span>
-                                </div>
-                                {proposal.note ? <p className="text-xs text-gray-300">{proposal.note}</p> : null}
-                                <pre className="whitespace-pre-wrap text-xs text-gray-200 bg-surface-800/70 rounded-lg p-2 max-h-40 overflow-y-auto">{proposal.proposed_raw_text}</pre>
-
-                                {canEdit && proposal.status === 'pending' ? (
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => reviewProposalMutation.mutate({ proposalId: proposal.id, action: 'approved' })}
-                                            className="btn-primary px-3 py-2 text-xs"
-                                        >
-                                            Aprobar
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => reviewProposalMutation.mutate({ proposalId: proposal.id, action: 'rejected' })}
-                                            className="btn-secondary px-3 py-2 text-xs"
-                                        >
-                                            Rechazar
-                                        </button>
-                                    </div>
-                                ) : null}
-                            </article>
-                        ))
-                    )}
-                </div>
-            ) : null}
-
-            {activeTab === 'versions' ? (
-                <div className="space-y-2.5">
-                    {(versions ?? []).length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-surface-400 p-5 text-sm text-gray-400 text-center">
-                            Historial vacio por ahora.
-                        </div>
-                    ) : (
-                        (versions ?? []).map((version) => (
-                            <article key={version.id} className="rounded-xl border border-surface-500 bg-surface-700/40 p-3">
-                                <div className="flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-2 text-xs text-gray-300">
-                                        <History className="w-3.5 h-3.5" />
-                                        v{version.version_number} · {formatRelative(version.created_at)}
-                                    </div>
-                                    {canEdit ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => rollbackMutation.mutate(version.id)}
-                                            className="btn-secondary px-3 py-1.5 text-xs"
-                                            disabled={rollbackMutation.isPending}
-                                        >
-                                            <RotateCcw className="w-3.5 h-3.5" /> Rollback
-                                        </button>
-                                    ) : null}
-                                </div>
-                                <pre className="whitespace-pre-wrap text-xs text-gray-200 bg-surface-800/70 rounded-lg p-2 mt-2 max-h-36 overflow-y-auto">{version.raw_text}</pre>
-                            </article>
-                        ))
-                    )}
-                </div>
-            ) : null}
         </section>
     )
 }
 
-function TabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            className={`px-3 py-1.5 text-xs rounded-full border whitespace-nowrap transition-colors ${
-                active
-                    ? 'bg-brand-500/20 text-brand-100 border-brand-400/50'
-                    : 'bg-surface-700 text-gray-300 border-surface-500'
-            }`}
-        >
-            {label}
-        </button>
-    )
-}
-
-async function invalidateLyricsQueries(queryClient: ReturnType<typeof useQueryClient>, songId: string): Promise<void> {
-    await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['song-lyrics', songId] }),
-        queryClient.invalidateQueries({ queryKey: ['song-lyrics-proposals', songId] }),
-        queryClient.invalidateQueries({ queryKey: ['song-lyrics-versions', songId] }),
-        queryClient.invalidateQueries({ queryKey: ['song-lyrics-translation', songId] }),
-    ])
-}
+const EmptyBlock: React.FC<{ icon: React.ReactNode; title: string; description?: string; action?: React.ReactNode }> = ({ icon, title, description, action }) => (
+    <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
+        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500/12 text-brand-300">{icon}</span>
+        <div>
+            <p className="text-[15px] font-bold text-white">{title}</p>
+            {description ? <p className="mx-auto mt-1 max-w-xs text-sm text-gray-400">{description}</p> : null}
+        </div>
+        {action}
+    </div>
+)

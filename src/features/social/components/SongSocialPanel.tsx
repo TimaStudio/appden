@@ -1,8 +1,10 @@
 ﻿import React, { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Flame, Heart, MessageCircle, Send } from 'lucide-react'
+import { Clock3, Heart, MessageCircle, Send } from 'lucide-react'
 import { useToast } from '@components/ui/Toast'
+import { Avatar } from '@components/common/Avatar'
 import { usePlayerStore } from '@app/store/player.store'
+import { useAuth } from '@hooks/useAuth'
 import { groupsService } from '@services/groups.service'
 import { Skeleton } from '@components/ui/LoadingSkeleton'
 import { useSongSocial } from '@features/social/hooks/useSongSocial'
@@ -17,6 +19,7 @@ import {
     normalizeTimestampLabel,
     parseTimestampToken,
 } from '@features/social/utils/comment-utils'
+import { cn } from '@lib/utils'
 import type { Song, SongComment, SongReactionType } from '@/types'
 
 interface SongSocialPanelProps {
@@ -26,13 +29,14 @@ interface SongSocialPanelProps {
 }
 
 const REACTIONS: Array<{ type: SongReactionType; label: string; emoji: string }> = [
-    { type: 'fire', label: 'Fuego', emoji: '??' },
-    { type: 'heart', label: 'Corazon', emoji: '??' },
-    { type: 'headphones', label: 'Escucha', emoji: '??' },
+    { type: 'fire', label: 'Fuego', emoji: '🔥' },
+    { type: 'heart', label: 'Corazón', emoji: '💜' },
+    { type: 'headphones', label: 'Escucha', emoji: '🎧' },
 ]
 
 export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, groupId }) => {
     const { success, error: toastError } = useToast()
+    const { profile } = useAuth()
     const currentSong = usePlayerStore((state) => state.currentSong)
     const currentTime = usePlayerStore((state) => state.currentTime)
     const setQueue = usePlayerStore((state) => state.setQueue)
@@ -80,10 +84,7 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
         return map
     }, [comments])
 
-    const rootComments = useMemo(
-        () => comments.filter((comment) => !comment.parent_id),
-        [comments]
-    )
+    const rootComments = useMemo(() => comments.filter((comment) => !comment.parent_id), [comments])
 
     const memberMentions = useMemo(() => buildMentionOptions(members ?? []), [members])
 
@@ -137,10 +138,10 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                 },
                 onError: (err) => {
                     if (err instanceof Error && err.message === 'empty-comment') {
-                        toastError('Error', 'Escribe un comentario antes de enviarlo.')
+                        toastError('Escribe un comentario antes de enviarlo')
                         return
                     }
-                    toastError('Error', 'No se pudo publicar el comentario.')
+                    toastError('No se pudo publicar el comentario')
                 },
             }
         )
@@ -158,7 +159,7 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                     setReplyDraft('')
                     success('Respuesta publicada')
                 },
-                onError: () => toastError('Error', 'No se pudo publicar la respuesta.'),
+                onError: () => toastError('No se pudo publicar la respuesta'),
             }
         )
     }
@@ -177,10 +178,10 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                 },
                 onError: (err) => {
                     if (err instanceof Error && err.message === 'empty-comment') {
-                        toastError('Error', 'El comentario no puede estar vacio.')
+                        toastError('El comentario no puede estar vacío')
                         return
                     }
-                    toastError('Error', 'No se pudo editar el comentario.')
+                    toastError('No se pudo editar el comentario')
                 },
             }
         )
@@ -198,8 +199,9 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                                 key={`${token}-${index}`}
                                 type="button"
                                 onClick={() => onJumpToTime(parsedTime)}
-                                className="inline-flex rounded-md px-1.5 py-0.5 text-xs text-brand-200 bg-brand-500/20 border border-brand-400/40 mr-1"
+                                className="mr-1 inline-flex items-center gap-1 rounded-full border border-brand-400/30 bg-brand-500/15 px-2 py-0.5 text-xs font-bold text-brand-200 transition-colors hover:bg-brand-500/30"
                             >
+                                <Clock3 className="h-3 w-3" />
                                 {normalizeTimestampLabel(token)}
                             </button>
                         )
@@ -207,7 +209,7 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
 
                     if (token.startsWith('@')) {
                         return (
-                            <span key={`${token}-${index}`} className="text-brand-200 font-medium mr-1">
+                            <span key={`${token}-${index}`} className="mr-1 font-semibold text-brand-300">
                                 {token}
                             </span>
                         )
@@ -220,119 +222,117 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
     }
 
     return (
-        <section className="card p-4 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold text-white">Comunidad</h2>
-                <div className="flex items-center gap-3 text-xs text-gray-300">
+        <div className="space-y-4">
+            <div className="flex items-end justify-between gap-3">
+                <h2 id="song-community-title" className="section-title">
+                    Comunidad
+                </h2>
+                <p className="flex items-center gap-3 pb-1 text-xs font-semibold text-gray-400">
                     <span className="inline-flex items-center gap-1">
-                        <Heart className="w-3.5 h-3.5" /> {likesCount}
+                        <Heart className="h-3.5 w-3.5" />
+                        {likesCount}
                     </span>
                     <span className="inline-flex items-center gap-1">
-                        <MessageCircle className="w-3.5 h-3.5" /> {comments.length}
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {comments.length}
                     </span>
-                </div>
+                </p>
             </div>
 
-            <div className="rounded-2xl border border-surface-500 bg-surface-700/50 p-3 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() =>
-                            toggleLikeMutation.mutate(undefined, {
-                                onError: () => toastError('Error', 'No se pudo actualizar el like.'),
-                            })
-                        }
-                        className={`btn-secondary px-3 py-2 text-xs ${
-                            likedByMe ? 'border-pink-400/60 text-pink-300 bg-pink-500/10' : ''
-                        }`}
-                        disabled={toggleLikeMutation.isPending}
-                    >
-                        <Heart className={`w-3.5 h-3.5 ${likedByMe ? 'fill-current' : ''}`} />
-                        {likedByMe ? 'Te gusta' : 'Me gusta'}
-                    </button>
+            <div className="flex flex-wrap items-center gap-2">
+                <button
+                    type="button"
+                    aria-pressed={likedByMe}
+                    onClick={() =>
+                        toggleLikeMutation.mutate(undefined, {
+                            onError: () => toastError('No se pudo actualizar el me gusta'),
+                        })
+                    }
+                    className={cn('chip', likedByMe && '!border-pink-400/40 !bg-pink-500/15 !bg-none !text-pink-200 !shadow-none')}
+                    disabled={toggleLikeMutation.isPending}
+                >
+                    <Heart className={cn('h-4 w-4', likedByMe && 'fill-current')} />
+                    {likedByMe ? 'Te gusta' : 'Me gusta'}
+                </button>
 
-                    {REACTIONS.map((reaction) => {
-                        const active = reactionByMe === reaction.type
-                        const count = reactionCounts[reaction.type] ?? 0
-                        return (
+                {REACTIONS.map((reaction) => {
+                    const active = reactionByMe === reaction.type
+                    const count = reactionCounts[reaction.type] ?? 0
+                    return (
+                        <button
+                            key={reaction.type}
+                            type="button"
+                            aria-pressed={active}
+                            aria-label={`${reaction.label}: ${count}`}
+                            onClick={() =>
+                                setReactionMutation.mutate(active ? null : reaction.type, {
+                                    onError: () => toastError('No se pudo actualizar la reacción'),
+                                })
+                            }
+                            className="chip tabular"
+                        >
+                            <span aria-hidden="true">{reaction.emoji}</span>
+                            {count}
+                        </button>
+                    )
+                })}
+            </div>
+
+            <div className="card p-3 sm:p-4">
+                <div className="flex items-start gap-3">
+                    <Avatar src={profile?.avatar_url} name={profile?.display_name} size="md" className="mt-0.5 hidden sm:flex" />
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-end gap-2 rounded-2xl bg-black/25 p-1.5 pl-3.5 ring-1 ring-white/[0.07] transition-shadow focus-within:ring-brand-400/50">
+                            <textarea
+                                value={commentDraft}
+                                onChange={(event) => setCommentDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submitMainComment()
+                                }}
+                                rows={1}
+                                maxLength={500}
+                                className="max-h-32 min-h-[2.5rem] flex-1 resize-none bg-transparent py-2 text-base text-white placeholder-gray-500 outline-none sm:text-sm"
+                                placeholder="Escribe un comentario…"
+                                aria-label="Comentario"
+                                style={{ fieldSizing: 'content' } as React.CSSProperties}
+                            />
                             <button
-                                key={reaction.type}
                                 type="button"
-                                onClick={() =>
-                                    setReactionMutation.mutate(active ? null : reaction.type, {
-                                        onError: () => toastError('Error', 'No se pudo actualizar la reaccion.'),
-                                    })
-                                }
-                                className={`rounded-full px-2.5 py-1.5 text-xs border transition-colors ${
-                                    active
-                                        ? 'border-brand-400/50 bg-brand-500/20 text-brand-100'
-                                        : 'border-surface-400 bg-surface-600/40 text-gray-200'
-                                }`}
+                                onClick={submitMainComment}
+                                disabled={addCommentMutation.isPending || !commentDraft.trim()}
+                                className="btn-primary !min-h-[2.5rem] !w-10 shrink-0 !p-0"
+                                aria-label="Enviar comentario"
                             >
-                                <span className="mr-1">{reaction.emoji}</span>
-                                {count}
+                                <Send className="h-4 w-4" />
                             </button>
-                        )
-                    })}
-                </div>
-
-                <div className="space-y-2">
-                    <label className="label mb-1">Comentario</label>
-                    <div className="flex items-start gap-2">
-                        <textarea
-                            value={commentDraft}
-                            onChange={(event) => setCommentDraft(event.target.value)}
-                            rows={3}
-                            maxLength={500}
-                            className="input flex-1 resize-none"
-                            placeholder="Escribe algo sobre la cancion... Usa @usuario o [01:23]"
-                        />
-                        <button
-                            type="button"
-                            onClick={submitMainComment}
-                            disabled={addCommentMutation.isPending || !commentDraft.trim()}
-                            className="btn-primary px-3 py-2"
-                            aria-label="Enviar comentario"
-                        >
-                            <Send className="w-4 h-4" />
-                        </button>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button type="button" onClick={() => insertCurrentTimestamp('main')} className="chip !min-h-[1.9rem] !px-3 !text-xs">
+                                <Clock3 className="h-3.5 w-3.5" />
+                                Marcar {liveTimestamp}
+                            </button>
+                            {commentDraft.length > 400 ? <span className="text-[11px] text-gray-500">{500 - commentDraft.length} restantes</span> : null}
+                        </div>
+                        <MentionSuggestions options={mainMentionOptions} onSelect={(option) => setCommentDraft((prev) => applyMention(prev, option.token))} />
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300">
-                        <button
-                            type="button"
-                            onClick={() => insertCurrentTimestamp('main')}
-                            className="btn-secondary px-2.5 py-1.5"
-                        >
-                            Insertar [{liveTimestamp}]
-                        </button>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-surface-600/60 border border-surface-400 px-2 py-1">
-                            <Flame className="w-3.5 h-3.5 text-amber-300" />
-                            Marca un momento exacto para compartirlo
-                        </span>
-                    </div>
-
-                    <MentionSuggestions
-                        options={mainMentionOptions}
-                        onSelect={(option) => setCommentDraft((prev) => applyMention(prev, option.token))}
-                    />
                 </div>
             </div>
 
             {isLoading ? (
                 <div className="space-y-2">
-                    <Skeleton className="h-24" />
-                    <Skeleton className="h-24" />
-                    <Skeleton className="h-24" />
+                    <Skeleton className="h-20 rounded-2xl" />
+                    <Skeleton className="h-20 rounded-2xl" />
                 </div>
             ) : rootComments.length === 0 ? (
-                <div className="relative overflow-hidden rounded-2xl border border-dashed border-surface-400 p-6 text-center">
-                    <div className="absolute -top-8 -right-10 w-24 h-24 rounded-full bg-brand-500/20 blur-2xl" />
-                    <div className="absolute -bottom-8 -left-10 w-24 h-24 rounded-full bg-cyan-500/20 blur-2xl" />
-                    <p className="relative text-sm text-gray-300">Inicia la conversacion de esta cancion.</p>
+                <div className="flex flex-col items-center gap-2 rounded-[1.25rem] border border-dashed border-white/10 px-6 py-9 text-center">
+                    <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand-500/12 text-brand-300">
+                        <MessageCircle className="h-5 w-5" />
+                    </span>
+                    <p className="text-[15px] font-bold text-white">Sé el primero en comentar</p>
+                    <p className="text-sm text-gray-400">Cuéntale al grupo qué te parece.</p>
                 </div>
             ) : (
-                <div className="space-y-2.5 max-h-[460px] overflow-y-auto no-scrollbar pr-1">
+                <div className="space-y-3">
                     {rootComments.map((comment) => (
                         <SongCommentThread
                             key={comment.id}
@@ -343,13 +343,12 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                             commentLikeCounts={socialData?.commentLikeCounts ?? {}}
                             onToggleCommentLike={(commentId) =>
                                 toggleCommentLikeMutation.mutate(commentId, {
-                                    onError: () =>
-                                        toastError('Error', 'No se pudo actualizar el like del comentario.'),
+                                    onError: () => toastError('No se pudo actualizar el me gusta del comentario'),
                                 })
                             }
                             onDeleteComment={(commentId) =>
                                 deleteCommentMutation.mutate(commentId, {
-                                    onError: () => toastError('Error', 'No se pudo eliminar el comentario.'),
+                                    onError: () => toastError('No se pudo eliminar el comentario'),
                                 })
                             }
                             onStartReply={(commentId, seed) => {
@@ -367,9 +366,7 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                             replyDraft={replyDraft}
                             onReplyDraftChange={setReplyDraft}
                             replyMentionOptions={replyMentionOptions}
-                            onSelectReplyMention={(option) =>
-                                setReplyDraft((prev) => applyMention(prev, option.token))
-                            }
+                            onSelectReplyMention={(option) => setReplyDraft((prev) => applyMention(prev, option.token))}
                             onInsertReplyTimestamp={() => insertCurrentTimestamp('reply')}
                             liveTimestamp={liveTimestamp}
                             onJumpToTimestamp={jumpToTimestamp}
@@ -394,7 +391,6 @@ export const SongSocialPanel: React.FC<SongSocialPanelProps> = ({ song, userId, 
                     ))}
                 </div>
             )}
-        </section>
+        </div>
     )
 }
-

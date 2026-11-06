@@ -9,9 +9,9 @@ bucket_name = "appden-media"
 
 [vars]
 # Your Supabase project URL, e.g. https://abcd.supabase.co
-SUPABASE_URL = ""
+SUPABASE_URL = "https://lgcvoompsljknhpwsusg.supabase.co"
 # Public anon key (same value as VITE_SUPABASE_ANON_KEY)
-SUPABASE_ANON_KEY = ""
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxnY3Zvb21wc2xqa25ocHdzdXNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3ODgyOTksImV4cCI6MjA4ODM2NDI5OX0.2Ii71UJrk8t812UZdLhnR8Khwp6uUfeCazpkPfD45U0"
 # Comma separated origins allowed to call the worker, e.g. "https://appden.vercel.app,http://127.0.0.1:4173"
 ALLOWED_ORIGINS = "*"
 MAX_UPLOAD_MB = "60"

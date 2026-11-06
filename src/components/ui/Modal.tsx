@@ -120,7 +120,7 @@ export const Modal: React.FC<ModalProps> = ({
                         dragElastic={{ top: 0, bottom: 0.6 }}
                         onDragEnd={handleDragEnd}
                         className={cn(
-                            'relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[1.75rem] border border-white/[0.08] bg-[#17171a] shadow-[0_-20px_80px_rgba(0,0,0,0.5)]',
+                            'relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[1.75rem] border border-white/[0.08] bg-surface-600 shadow-[0_-20px_80px_rgba(0,0,0,0.5)]',
                             'sm:max-h-[88dvh] sm:rounded-[1.5rem]',
                             sizeClass[size],
                             className
@@ -156,7 +156,7 @@ export const Modal: React.FC<ModalProps> = ({
                         </div>
 
                         {footer ? (
-                            <div className="shrink-0 border-t border-white/[0.06] bg-[#17171a] px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-6 sm:pb-5">
+                            <div className="shrink-0 border-t border-white/[0.06] bg-surface-600 px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-6 sm:pb-5">
                                 {footer}
                             </div>
                         ) : null}

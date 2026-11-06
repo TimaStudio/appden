@@ -30,8 +30,11 @@ import { useUnreadNotificationsCount } from '@hooks/useNotifications'
 import { profileSchema, validateAvatarFile, type ProfileFormData } from '@lib/validators'
 import { clearSignedUrlCache } from '@lib/supabase/client'
 import { useToast } from '@components/ui/Toast'
-import { Avatar } from '@components/common/Avatar'
 import { ConfirmDialog } from '@components/ui/ConfirmDialog'
+import { PalettePicker } from '@components/ui/PalettePicker'
+import { ProfileHero } from '@components/profile/ProfileHero'
+import { useMusicLibrary } from '@features/music/hooks/useMusicLibrary'
+import { getArtistSongs } from '@features/music/utils/library'
 import { Modal } from '@components/ui/Modal'
 import { ProfileSkeleton } from '@components/ui/LoadingSkeleton'
 import { formatDate } from '@lib/utils'
@@ -51,6 +54,7 @@ type MenuItem = {
 const ProfilePage: React.FC = () => {
     const { user, userId, profile: authProfile } = useAuth()
     const { myGroups } = useActiveGroup()
+    const { songs: librarySongs, albums: libraryAlbums, memberIndex } = useMusicLibrary()
     const { setUser, logout } = useAuthStore()
     const { success, error: toastError } = useToast()
     const queryClient = useQueryClient()
@@ -161,6 +165,12 @@ const ProfilePage: React.FC = () => {
         return <div className="page-shell text-gray-400">No encontramos tu perfil.</div>
     }
 
+    const mySongCount = (() => {
+        const { credited, uploadedOnly } = getArtistSongs(librarySongs, profile.id, memberIndex)
+        return credited.length + uploadedOnly.length
+    })()
+    const myAlbumCount = libraryAlbums.filter((album) => album.artists.some((artist) => artist.profileId === profile.id)).length
+
     const sections: Array<{ title: string; items: MenuItem[] }> = [
         {
             title: 'Tu actividad',
@@ -191,44 +201,50 @@ const ProfilePage: React.FC = () => {
 
     return (
         <div className="page-shell animate-fade-in">
-            <section className="flex flex-col items-center pt-2 text-center">
-                <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="relative rounded-full"
-                    aria-label="Cambiar foto de perfil"
-                    disabled={isUploadingAvatar}
-                >
-                    <Avatar src={profile.avatar_url} name={profile.display_name} size="xl" />
-                    <span className="absolute bottom-0 right-0 grid h-9 w-9 place-items-center rounded-full border-2 border-[#0b0b0d] bg-brand-400 text-black">
-                        <Camera className="h-4 w-4" />
-                    </span>
-                    {isUploadingAvatar ? (
-                        <span className="absolute inset-0 grid place-items-center rounded-full bg-black/55">
-                            <span className="h-7 w-7 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            <ProfileHero
+                name={profile.display_name}
+                username={profile.username}
+                avatarUrl={profile.avatar_url}
+                bio={profile.bio}
+                badges={
+                    <span className="chip !min-h-[1.9rem] !text-xs">Desde {formatDate(profile.created_at)}</span>
+                }
+                stats={[
+                    { label: 'Canciones', value: mySongCount },
+                    { label: 'Álbumes', value: myAlbumCount },
+                    { label: 'Grupos', value: myGroups.length },
+                ]}
+                onAvatarClick={() => fileInputRef.current?.click()}
+                avatarOverlay={
+                    <>
+                        <span className="absolute bottom-1 right-1 grid h-9 w-9 place-items-center rounded-full border-2 border-background bg-brand-500 text-white shadow-glow-brand">
+                            <Camera className="h-4 w-4" />
                         </span>
-                    ) : null}
-                </button>
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                        {isUploadingAvatar ? (
+                            <span className="absolute inset-1 grid place-items-center rounded-full bg-black/60">
+                                <span className="h-7 w-7 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                            </span>
+                        ) : null}
+                    </>
+                }
+                actions={
+                    <>
+                        <button type="button" onClick={() => setEditing(true)} className="btn-primary">
+                            <Pencil className="h-4 w-4" />
+                            Editar perfil
+                        </button>
+                        <Link to={ROUTES.PROFILE_ID(profile.id)} className="btn-secondary">
+                            <FileText className="h-4 w-4" />
+                            Perfil público
+                        </Link>
+                    </>
+                }
+            />
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
 
-                <h1 className="mt-4 font-headline text-2xl font-extrabold tracking-tight text-white">{profile.display_name}</h1>
-                <p className="mt-0.5 text-sm text-gray-400">
-                    {profile.username ? <span className="text-brand-300">@{profile.username}</span> : 'Sin nombre de usuario'}
-                    <span className="mx-1.5 text-gray-600">·</span>
-                    Desde {formatDate(profile.created_at)}
-                </p>
-                {profile.bio ? <p className="mt-3 max-w-sm text-sm leading-relaxed text-gray-300">{profile.bio}</p> : null}
-
-                <div className="mt-4 flex gap-2">
-                    <button type="button" onClick={() => setEditing(true)} className="btn-secondary">
-                        <Pencil className="h-4 w-4" />
-                        Editar perfil
-                    </button>
-                    <Link to={ROUTES.PROFILE_ID(profile.id)} className="btn-secondary">
-                        <FileText className="h-4 w-4" />
-                        Perfil público
-                    </Link>
-                </div>
+            <section>
+                <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-[0.16em] text-gray-500">Apariencia</h2>
+                <PalettePicker />
             </section>
 
             {sections.map((section) => {
@@ -236,7 +252,7 @@ const ProfilePage: React.FC = () => {
                 if (items.length === 0) return null
                 return (
                     <section key={section.title}>
-                        <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">{section.title}</h2>
+                        <h2 className="mb-2 px-1 text-xs font-bold uppercase tracking-[0.16em] text-gray-500">{section.title}</h2>
                         <div className="list-group">
                             {items.map((item) => (
                                 <MenuRow key={item.label} item={item} />
@@ -309,12 +325,12 @@ const MenuRow: React.FC<{ item: MenuItem }> = ({ item }) => {
     const { icon: Icon, label, to, onClick, badge, hint, tone } = item
     const content = (
         <>
-            <span className={tone === 'danger' ? 'grid h-9 w-9 place-items-center rounded-xl bg-red-400/10 text-red-300' : 'grid h-9 w-9 place-items-center rounded-xl bg-white/[0.06] text-gray-300'}>
+            <span className={tone === 'danger' ? 'grid h-9 w-9 place-items-center rounded-xl bg-red-400/10 text-red-300' : 'grid h-9 w-9 place-items-center rounded-xl bg-brand-500/12 text-brand-300'}>
                 <Icon className="h-[18px] w-[18px]" />
             </span>
             <span className={tone === 'danger' ? 'flex-1 text-[15px] font-medium text-red-300' : 'flex-1 text-[15px] font-medium text-white'}>{label}</span>
             {badge ? (
-                <span className="grid h-6 min-w-6 place-items-center rounded-full bg-brand-400 px-2 text-xs font-bold text-black">{badge > 99 ? '99+' : badge}</span>
+                <span className="grid h-6 min-w-6 place-items-center rounded-full bg-brand-500 px-2 text-xs font-bold text-white">{badge > 99 ? '99+' : badge}</span>
             ) : hint ? (
                 <span className="text-sm text-gray-500">{hint}</span>
             ) : null}

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { Song } from '@/types'
 import { Calendar, Clock, Disc3, Edit2, Heart, MoreHorizontal, Music, Pause, Play } from 'lucide-react'
 import { songsService } from '@services/songs.service'
 import { useAuth } from '@hooks/useAuth'
@@ -9,13 +10,12 @@ import { usePlayerStore } from '@app/store/player.store'
 import { Avatar } from '@components/common/Avatar'
 import { LyricsPanel } from '@components/music/LyricsPanel'
 import { SongSocialPanel } from '@features/social/components/SongSocialPanel'
-import { Cover } from '@components/music/Cover'
+import { Cover, EqualizerBars } from '@components/music/Cover'
 import { EditSongForm } from '@components/music/EditSongForm'
 import { SongActionsSheet } from '@components/music/SongActionsSheet'
 import { EmptyState } from '@components/ui/EmptyState'
 import { ListSkeleton, Skeleton } from '@components/ui/LoadingSkeleton'
 import { PageHeader } from '@components/ui/PageHeader'
-import { Tabs } from '@components/ui/Tabs'
 import { useDominantColor } from '@features/player/hooks/useDominantColor'
 import { getSongAlbumRouteId, getSongMemberCredits } from '@features/music/utils/library'
 import { canEditSong } from '@features/music/utils/permissions'
@@ -35,20 +35,24 @@ const SongDetailPage: React.FC = () => {
     const togglePlay = usePlayerStore((state) => state.togglePlay)
     const currentSong = usePlayerStore((state) => state.currentSong)
 
-    const [activeTab, setActiveTab] = useState<'lyrics' | 'social'>(searchParams.get('tab') === 'comentarios' ? 'social' : 'lyrics')
     const [showActions, setShowActions] = useState(false)
     const [editing, setEditing] = useState(false)
     const isPlaying = usePlayerStore((state) => state.isPlaying)
     const appliedTimestampRef = useRef<string | null>(null)
+    const communityRef = useRef<HTMLElement | null>(null)
 
+    const queryClient = useQueryClient()
     const { data: song, isLoading } = useQuery({
         queryKey: ['song', songId],
         queryFn: () => songsService.getSong(songId!, userId!),
         enabled: !!songId && !!userId,
+        // Opening a song from the library reuses the data we already have (no extra download).
+        initialData: () => queryClient.getQueryData<Song[]>(['songs', groupId, userId])?.find((item) => item.id === songId),
+        initialDataUpdatedAt: () => queryClient.getQueryState(['songs', groupId, userId])?.dataUpdatedAt,
     })
 
     const { data: groupSongs } = useQuery({
-        queryKey: ['songs', groupId],
+        queryKey: ['songs', groupId, userId],
         queryFn: () => songsService.getSongs(groupId!, userId!),
         enabled: !!groupId && !!userId,
     })
@@ -102,11 +106,20 @@ const SongDetailPage: React.FC = () => {
         setPlaying(true)
     }, [song, sharedTimestamp, currentSong?.id, setCurrentTime, setPlaying, setQueue])
 
+    // Links such as /music/:id?tab=comentarios jump straight to the community section.
+    const wantsCommunity = searchParams.get('tab') === 'comentarios'
+    const songReady = !!song
+    useEffect(() => {
+        if (!wantsCommunity || !songReady) return
+        const timer = window.setTimeout(() => communityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350)
+        return () => window.clearTimeout(timer)
+    }, [wantsCommunity, songReady])
+
     if (isLoading) {
         return (
             <div className="page-shell">
                 <PageHeader back title={<span className="sr-only">Canción</span>} />
-                <Skeleton className="mx-auto aspect-square w-56 rounded-3xl" />
+                <Skeleton className="mx-auto aspect-square w-60 rounded-[2rem]" />
                 <ListSkeleton count={3} />
             </div>
         )
@@ -127,30 +140,46 @@ const SongDetailPage: React.FC = () => {
     const isCurrent = currentSong?.id === song.id
     const isThisPlaying = isCurrent && isPlaying
     const canEdit = canEditSong(song, userId)
-    const wash = tint ? `color-mix(in srgb, ${tint} 45%, transparent)` : 'rgba(55,90,170,0.25)'
+    const wash = tint ? `color-mix(in srgb, ${tint} 50%, transparent)` : 'rgb(var(--brand-600) / 0.3)'
 
     return (
         <div className="relative">
             <div
-                className="pointer-events-none absolute inset-x-0 -top-[var(--header-h)] h-[28rem] transition-[background] duration-700"
-                style={{ background: `linear-gradient(180deg, ${wash} 0%, transparent 100%)` }}
+                className="pointer-events-none absolute inset-x-0 -top-[var(--header-h)] h-[34rem] transition-[background] duration-700"
+                style={{ background: `radial-gradient(90% 70% at 50% 0%, ${wash} 0%, transparent 72%)` }}
             />
 
             <div className="page-shell relative animate-fade-in">
                 <PageHeader back title={<span className="sr-only">{song.title}</span>} className="-mb-4" />
 
-                <section className="flex flex-col items-center text-center md:flex-row md:items-end md:gap-7 md:text-left">
-                    <Cover
-                        src={song.cover_url}
-                        alt={song.title}
-                        seed={song.id}
-                        className="aspect-square w-56 rounded-3xl shadow-[0_24px_70px_rgba(0,0,0,0.55)]"
-                        iconClassName="h-12 w-12"
-                    />
-                    <div className="mt-5 min-w-0 md:mt-0">
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/50">Canción</p>
-                        <h1 className="mt-1 break-words font-headline text-3xl font-extrabold tracking-tight text-white md:text-4xl">{song.title}</h1>
-                        <p className="mt-2 text-[15px] text-gray-300">
+                <section className="flex flex-col items-center gap-6 text-center md:flex-row md:items-end md:gap-8 md:text-left">
+                    <div className="relative shrink-0">
+                        <div
+                            aria-hidden="true"
+                            className={cn('absolute -inset-4 rounded-[2.5rem] opacity-60 blur-2xl transition-opacity duration-700', isThisPlaying && 'animate-glow-pulse')}
+                            style={{ background: wash }}
+                        />
+                        <Cover
+                            src={song.cover_url}
+                            alt={song.title}
+                            seed={song.id}
+                            className="relative aspect-square w-60 rounded-[2rem] shadow-[0_30px_80px_rgba(0,0,0,0.6)] ring-1 ring-white/15 md:w-64"
+                            iconClassName="h-14 w-14"
+                        >
+                            {isThisPlaying ? (
+                                <span className="absolute bottom-3 left-3 grid h-9 place-items-center rounded-full bg-black/55 px-3 text-brand-300 backdrop-blur-md">
+                                    <EqualizerBars playing className="h-3.5" />
+                                </span>
+                            ) : null}
+                        </Cover>
+                    </div>
+
+                    <div className="reveal min-w-0">
+                        <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-300">Canción</p>
+                        <h1 className="text-balance mt-2 break-words font-headline text-4xl font-extrabold leading-[1.02] tracking-tight text-white md:text-6xl">
+                            {song.title}
+                        </h1>
+                        <p className="mt-3 text-base text-gray-300 md:text-lg">
                             {memberCredits.length > 0 || externalCredits.length > 0 ? (
                                 <>
                                     {memberCredits.map((artist, index) => (
@@ -158,7 +187,7 @@ const SongDetailPage: React.FC = () => {
                                             {index > 0 ? ', ' : null}
                                             <Link
                                                 to={ROUTES.ARTIST(artist.profileId!)}
-                                                className="font-semibold text-white underline-offset-4 transition-colors hover:text-brand-200 hover:underline"
+                                                className="font-bold text-white underline-offset-4 transition-colors hover:text-brand-300 hover:underline"
                                             >
                                                 {artist.name}
                                             </Link>
@@ -177,70 +206,69 @@ const SongDetailPage: React.FC = () => {
                         </p>
                         {song.album_name ? (
                             albumRouteId ? (
-                                <Link to={ROUTES.ALBUM(albumRouteId)} className="mt-1 inline-flex items-center gap-1.5 text-sm text-gray-400 transition-colors hover:text-white">
+                                <Link to={ROUTES.ALBUM(albumRouteId)} className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-gray-400 transition-colors hover:text-brand-300">
                                     <Disc3 className="h-4 w-4" />
                                     {song.album_name}
                                 </Link>
                             ) : (
-                                <p className="mt-1 text-sm text-gray-400">{song.album_name}</p>
+                                <p className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-gray-400">
+                                    <Disc3 className="h-4 w-4" />
+                                    {song.album_name}
+                                </p>
                             )
                         ) : null}
+
+                        <div className="mt-4 flex flex-wrap items-center justify-center gap-2 md:justify-start">
+                            {song.uploader ? (
+                                <Link to={ROUTES.ARTIST(song.uploaded_by)} className="chip !min-h-[2rem] !text-xs">
+                                    <Avatar src={song.uploader.avatar_url} name={song.uploader.display_name} size="xs" />
+                                    {song.uploader.display_name.split(' ')[0]}
+                                </Link>
+                            ) : null}
+                            <span className="chip !min-h-[2rem] !text-xs">
+                                <Clock className="h-3.5 w-3.5" />
+                                {formatDuration(song.duration_seconds)}
+                            </span>
+                            <span className="chip !min-h-[2rem] !text-xs">
+                                <Calendar className="h-3.5 w-3.5" />
+                                {formatDate(song.created_at)}
+                            </span>
+                        </div>
                     </div>
                 </section>
 
-                <div className="flex items-center justify-center gap-2 md:justify-start">
-                    <button onClick={handlePlay} className="btn-primary !min-h-[3rem] flex-1 !px-6 sm:flex-none" aria-label={isThisPlaying ? 'Pausar' : 'Reproducir'}>
+                <div className="flex items-center justify-center gap-2.5 md:justify-start">
+                    <button onClick={handlePlay} className="btn-primary !min-h-[3.25rem] flex-1 !px-8 !text-base sm:flex-none" aria-label={isThisPlaying ? 'Pausar' : 'Reproducir'}>
                         {isThisPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
                         {isThisPlaying ? 'Pausar' : 'Reproducir'}
                     </button>
                     <button
                         type="button"
                         onClick={favorite.toggle}
-                        className={cn('btn-icon !h-12 !w-12', favorite.isFavorite && 'text-pink-400')}
+                        className={cn('btn-icon !h-[3.25rem] !w-[3.25rem]', favorite.isFavorite && '!border-pink-400/40 !bg-pink-500/15 text-pink-300')}
                         aria-label={favorite.isFavorite ? 'Quitar de favoritas' : 'Añadir a favoritas'}
                         aria-pressed={favorite.isFavorite}
                     >
-                        <Heart className={cn('h-5 w-5', favorite.isFavorite && 'fill-current')} />
+                        <Heart className={cn('h-5 w-5 transition-transform', favorite.isFavorite && 'scale-110 fill-current')} />
                     </button>
                     {canEdit ? (
-                        <button type="button" onClick={() => setEditing(true)} className="btn-icon !h-12 !w-12" aria-label="Editar canción">
+                        <button type="button" onClick={() => setEditing(true)} className="btn-icon !h-[3.25rem] !w-[3.25rem]" aria-label="Editar canción">
                             <Edit2 className="h-5 w-5" />
                         </button>
                     ) : null}
-                    <button type="button" onClick={() => setShowActions(true)} className="btn-icon !h-12 !w-12" aria-label="Más opciones">
+                    <button type="button" onClick={() => setShowActions(true)} className="btn-icon !h-[3.25rem] !w-[3.25rem]" aria-label="Más opciones">
                         <MoreHorizontal className="h-5 w-5" />
                     </button>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-center gap-2 md:justify-start">
-                    {song.uploader ? (
-                        <Link to={ROUTES.ARTIST(song.uploaded_by)} className="hero-meta-pill transition-colors hover:border-white/20 hover:text-white">
-                            <Avatar src={song.uploader.avatar_url} name={song.uploader.display_name} size="xs" />
-                            Subida por {song.uploader.display_name.split(' ')[0]}
-                        </Link>
-                    ) : null}
-                    <span className="hero-meta-pill">
-                        <Clock className="h-3.5 w-3.5" />
-                        {formatDuration(song.duration_seconds)}
-                    </span>
-                    <span className="hero-meta-pill">
-                        <Calendar className="h-3.5 w-3.5" />
-                        {formatDate(song.created_at)}
-                    </span>
-                </div>
-
-                <Tabs
-                    active={activeTab}
-                    stretch
-                    onChange={(value) => setActiveTab(value as 'lyrics' | 'social')}
-                    items={[
-                        { label: 'Letra', value: 'lyrics' },
-                        { label: 'Comentarios', value: 'social' },
-                    ]}
-                />
-
-                {activeTab === 'lyrics' && userId ? <LyricsPanel song={song} userId={userId} canEdit={canEdit} /> : null}
-                {activeTab === 'social' && userId ? <SongSocialPanel song={song} userId={userId} groupId={groupId ?? song.group_id} /> : null}
+                {userId ? (
+                    <div className="space-y-10 pt-4">
+                        <LyricsPanel song={song} userId={userId} canEdit={canEdit} />
+                        <section ref={communityRef} className="scroll-mt-[calc(var(--header-h)+0.5rem)]">
+                            <SongSocialPanel song={song} userId={userId} groupId={groupId ?? song.group_id} />
+                        </section>
+                    </div>
+                ) : null}
             </div>
 
             <SongActionsSheet

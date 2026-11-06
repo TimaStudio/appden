@@ -40,6 +40,26 @@ Code expects these private buckets:
 - `files`
 - `reports` (new; reports service falls back to `files` if bucket is missing)
 
+### Future external media storage decision
+
+Supabase Storage Free is currently retained for the existing implementation,
+but it has a 1 GB total Storage quota and a 50 MB per-file limit. For larger
+WAV uploads, the preferred future direction is:
+
+- Supabase remains the system of record for Auth, PostgreSQL, RLS, groups, and
+  song metadata.
+- Cloudflare R2 becomes the private object store for audio, covers, and other
+  large media.
+- Backblaze B2 is the fallback alternative.
+- Vercel serverless endpoints must issue signed upload and playback URLs;
+  provider secrets must remain server-side.
+- Supabase rows should store stable external object keys rather than expiring
+  URLs, and playback should sign on demand.
+
+Do not begin this migration by changing the current bucket names or existing
+paths. It requires a planned compatibility layer and a migration strategy for
+already uploaded Supabase objects.
+
 New social invitation table:
 
 - `group_invitations` (owner invites non-members; invitee can accept/reject)

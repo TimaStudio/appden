@@ -41,7 +41,7 @@ export const GroupSwitcher: React.FC<GroupSwitcherProps> = ({ className, variant
                     aria-haspopup="dialog"
                     aria-label={ariaLabel}
                 >
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-violet-500 text-[13px] font-bold text-white shadow-[0_8px_22px_rgba(110,159,255,0.28)]">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-[13px] font-bold text-white shadow-[0_8px_22px_rgb(var(--brand-500)/0.35)]">
                         {initials}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -55,7 +55,7 @@ export const GroupSwitcher: React.FC<GroupSwitcherProps> = ({ className, variant
                     type="button"
                     onClick={() => setOpen(true)}
                     className={cn(
-                        'grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-violet-500 text-[13px] font-bold text-white shadow-[0_8px_22px_rgba(110,159,255,0.25)] transition-transform duration-150 hover:scale-105 active:scale-95',
+                        'grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-[13px] font-bold text-white shadow-[0_8px_22px_rgb(var(--brand-500)/0.32)] transition-transform duration-150 hover:scale-105 active:scale-95',
                         className
                     )}
                     aria-haspopup="dialog"
@@ -76,7 +76,7 @@ export const GroupSwitcher: React.FC<GroupSwitcherProps> = ({ className, variant
                 >
                     <span
                         className={cn(
-                            'grid shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-violet-500 text-xs font-bold text-white shadow-[0_6px_18px_rgba(110,159,255,0.25)] transition-[width,height] duration-200',
+                            'grid shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white shadow-[0_6px_18px_rgb(var(--brand-500)/0.32)] transition-[width,height] duration-200',
                             compact ? 'h-8 w-8' : 'h-9 w-9'
                         )}
                     >

@@ -92,13 +92,13 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
             >
                 <div className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${buffered * 100}%` }} />
                 <div
-                    className={cn('absolute inset-y-0 left-0 rounded-full bg-white transition-colors', inline && 'group-hover:bg-brand-300')}
+                    className={cn('absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-brand-400 to-brand-300 transition-colors')}
                     style={{ width: `${ratio * 100}%` }}
                 />
             </div>
             <span
                 className={cn(
-                    'pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.4)] transition-[opacity,transform] duration-150',
+                    'pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-200 shadow-[0_2px_10px_rgba(0,0,0,0.4)] transition-[opacity,transform] duration-150',
                     dragging ? 'scale-125 opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'
                 )}
                 style={{ left: `${ratio * 100}%` }}

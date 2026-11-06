@@ -14,7 +14,8 @@
     "seed:qa:reset": "node scripts/qa-seed/reset.mjs",
     "storage:migrate": "node scripts/migrate-storage-to-r2.mjs",
     "storage:migrate:dry": "node scripts/migrate-storage-to-r2.mjs --dry-run",
-    "storage:deploy": "cd r2-worker && npx wrangler deploy"
+    "storage:deploy": "cd r2-worker && npx wrangler deploy",
+    "storage:setup": "node scripts/setup-r2.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",

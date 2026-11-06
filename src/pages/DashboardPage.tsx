@@ -63,28 +63,31 @@ const DashboardPage: React.FC = () => {
     const firstName = profile?.display_name?.split(' ')[0] ?? ''
 
     const quickActions = [
-        { icon: Upload, label: 'Subir', to: `${ROUTES.MUSIC}?subir=1`, tone: 'from-brand-400 to-brand-600', disabled: !hasGroup },
+        { icon: Upload, label: 'Subir', to: `${ROUTES.MUSIC}?subir=1`, tone: 'from-brand-300 to-brand-500', disabled: !hasGroup },
         { icon: Wallet, label: 'Gasto', to: `${ROUTES.DEBTS}?nueva=1`, tone: 'from-amber-300 to-orange-500', disabled: !hasGroup },
-        { icon: MessageCircle, label: 'Publicar', to: `${ROUTES.SOCIAL}?publicar=1`, tone: 'from-pink-400 to-fuchsia-600', disabled: false },
+        { icon: MessageCircle, label: 'Publicar', to: `${ROUTES.SOCIAL}?publicar=1`, tone: 'from-pink-400 to-rose-500', disabled: false },
         {
             icon: UserPlus,
             label: 'Invitar',
             to: activeGroup ? `${ROUTES.GROUP(activeGroup.id)}?invitar=1` : ROUTES.GROUPS,
-            tone: 'from-violet-400 to-indigo-600',
+            tone: 'from-accent-soft to-brand-600',
             disabled: false,
         },
     ]
 
     return (
         <div className="page-shell animate-fade-in">
-            <section>
-                <p className="text-sm font-medium text-gray-400">{greeting()}</p>
-                <h1 className="page-title mt-0.5">{firstName ? `Hola, ${firstName}` : 'Hola'}</h1>
+            <section className="reveal pt-1">
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-300">{greeting()}</p>
+                <h1 className="page-title mt-1 !text-4xl md:!text-5xl">
+                    Hola{firstName ? ', ' : ''}
+                    {firstName ? <span className="text-gradient">{firstName}</span> : null}
+                </h1>
             </section>
 
             {!hasGroup ? (
                 <section className="card overflow-hidden p-5">
-                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-400 to-violet-500">
+                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600">
                         <Users className="h-6 w-6 text-white" />
                     </div>
                     <h2 className="mt-4 text-lg font-bold text-white">Crea o únete a un grupo</h2>
@@ -99,11 +102,11 @@ const DashboardPage: React.FC = () => {
             ) : null}
 
             {currentSong && !isPlaying ? (
-                <section className="card flex items-center gap-3 p-3">
+                <section className="hero-card flex items-center gap-3 p-3.5">
                     <button type="button" onClick={() => openFullPlayer(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                         <Cover src={currentSong.cover_url} alt="" seed={currentSong.id} className="h-14 w-14 rounded-xl" />
                         <span className="min-w-0">
-                            <span className="block text-xs font-medium text-brand-300">Continuar escuchando</span>
+                            <span className="block text-[11px] font-bold uppercase tracking-[0.16em] text-brand-300">Continuar escuchando</span>
                             <span className="block truncate font-semibold text-white">{currentSong.title}</span>
                             <span className="block truncate text-sm text-gray-400">{currentSong.artist_name}</span>
                         </span>
@@ -111,7 +114,7 @@ const DashboardPage: React.FC = () => {
                     <button
                         type="button"
                         onClick={() => void resume()}
-                        className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white text-black active:scale-95"
+                        className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand shadow-glow-brand transition-transform hover:scale-105 active:scale-95"
                         aria-label="Continuar reproducción"
                     >
                         <Play className="ml-0.5 h-5 w-5 fill-current" />
@@ -126,12 +129,12 @@ const DashboardPage: React.FC = () => {
                         to={to}
                         aria-disabled={disabled}
                         className={cn(
-                            'flex flex-col items-center gap-2 rounded-2xl py-3 transition-colors active:bg-white/[0.05]',
+                            'group flex flex-col items-center gap-2 rounded-2xl border border-white/[0.06] bg-white/[0.035] py-3.5 transition-[background-color,transform,border-color] duration-200 hover:-translate-y-0.5 hover:border-brand-500/30 hover:bg-white/[0.06] active:scale-95',
                             disabled && 'pointer-events-none opacity-40'
                         )}
                     >
-                        <span className={cn('grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br shadow-[0_10px_24px_rgba(0,0,0,0.3)]', tone)}>
-                            <Icon className="h-5 w-5 text-white" />
+                        <span className={cn('grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br shadow-[0_10px_24px_rgba(0,0,0,0.3)] transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-3', tone)}>
+                            <Icon className="h-5 w-5 text-white drop-shadow" />
                         </span>
                         <span className="text-xs font-medium text-gray-300">{label}</span>
                     </Link>
@@ -139,9 +142,9 @@ const DashboardPage: React.FC = () => {
             </section>
 
             {hasGroup ? (
-                <Link to={ROUTES.DEBTS} className="card-interactive block p-5">
+                <Link to={ROUTES.DEBTS} className="hero-card block p-5 transition-transform duration-200 hover:-translate-y-0.5">
                     <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium text-gray-400">Tu balance en {activeGroup?.name}</p>
+                        <p className="text-xs font-bold uppercase tracking-[0.16em] text-gray-400">Tu balance en {activeGroup?.name}</p>
                         <ChevronRight className="h-5 w-5 text-gray-500" />
                     </div>
                     {myBalance ? (
@@ -199,14 +202,14 @@ const DashboardPage: React.FC = () => {
                                     key={song.id}
                                     type="button"
                                     onClick={() => setQueue(recentSongs, index)}
-                                    className="group w-32 shrink-0 text-left sm:w-36"
+                                    className="group w-36 shrink-0 text-left sm:w-40"
                                 >
-                                    <Cover src={song.cover_url} alt="" seed={song.id} className="aspect-square w-full rounded-2xl" iconClassName="h-8 w-8">
-                                        <span className="absolute bottom-2 right-2 grid h-9 w-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur transition-transform group-active:scale-90">
+                                    <Cover src={song.cover_url} alt="" seed={song.id} className="aspect-square w-full rounded-2xl ring-1 ring-white/10 transition-shadow duration-300 group-hover:shadow-[0_16px_44px_rgb(var(--brand-500)/0.28)]" iconClassName="h-8 w-8">
+                                        <span className="absolute bottom-2 right-2 grid h-10 w-10 translate-y-1 place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand opacity-100 shadow-glow-brand transition-all duration-200 group-active:scale-90 md:opacity-0 md:group-hover:translate-y-0 md:group-hover:opacity-100">
                                             <Play className="ml-0.5 h-4 w-4 fill-current" />
                                         </span>
                                     </Cover>
-                                    <p className="mt-2 truncate text-sm font-semibold text-white">{song.title}</p>
+                                    <p className="mt-2.5 truncate text-sm font-bold text-white">{song.title}</p>
                                     <p className="truncate text-xs text-gray-400">{song.artist_name}</p>
                                 </button>
                             ))}

@@ -70,7 +70,7 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onDismiss }) => {
             }}
             className={cn(
                 'relative overflow-hidden w-full max-w-sm rounded-[1.35rem] border backdrop-blur-2xl',
-                'bg-[linear-gradient(180deg,rgba(26,25,25,0.92)_0%,rgba(14,14,14,0.94)_100%)] shadow-card',
+                'bg-[linear-gradient(180deg,rgb(var(--surface-500)/0.94)_0%,rgb(var(--surface-800)/0.96)_100%)] shadow-card',
                 accentClasses[toast.type]
             )}
         >

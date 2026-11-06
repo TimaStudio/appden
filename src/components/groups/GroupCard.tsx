@@ -13,7 +13,7 @@ interface GroupCardProps {
 
 export const GroupCard: React.FC<GroupCardProps> = ({ group, memberCount, isActive = false }) => (
     <Link to={ROUTES.GROUP(group.id)} className="list-row">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-400/80 to-violet-500/80 text-sm font-bold text-white">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white">
             {getInitials(group.name)}
         </span>
         <span className="min-w-0 flex-1">

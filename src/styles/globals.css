@@ -1,4 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Epilogue:ital,wght@0,500;0,700;0,800;0,900;1,900&family=Inter:wght@400;500;600;700;800&display=swap');
+@font-face {
+  font-family: 'Urbanist';
+  src: url('/fonts/Urbanist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 @tailwind base;
 @tailwind components;
@@ -7,22 +13,23 @@
 @layer base {
   :root {
     color-scheme: dark;
-    --app-bg: #0b0b0d;
-    --app-bg-lowest: #000000;
-    --app-bg-low: #141416;
-    --app-bg-high: #1e1e21;
-    --app-bg-higher: #26262a;
+    --app-bg: rgb(var(--surface-bg));
+    --app-bg-lowest: rgb(var(--surface-deep));
+    --app-bg-low: rgb(var(--surface-low));
+    --app-bg-high: rgb(var(--surface-high));
+    --app-bg-higher: rgb(var(--surface-higher));
     --app-text: #ffffff;
-    --app-muted: #a3a3a8;
-    --app-accent: #85adff;
-    --app-accent-strong: #6e9fff;
-    --app-accent-soft: rgba(133, 173, 255, 0.16);
-    --app-secondary: #ac8aff;
+    --app-muted: rgb(var(--gray-400));
+    --app-accent: rgb(var(--brand-400));
+    --app-accent-strong: rgb(var(--brand-500));
+    --app-accent-soft: rgb(var(--brand-500) / 0.16);
+    --app-secondary: rgb(var(--accent-soft));
     --app-tertiary: #9bffce;
     --app-danger: #ff716c;
-    --app-glass: rgba(22, 22, 25, 0.72);
+    --app-glass: rgb(var(--surface-low) / 0.72);
     --app-ghost-border: rgba(255, 255, 255, 0.08);
     --app-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 
     /*
      * Shell metrics shared by the layout, the dock, the player and toasts.
@@ -110,12 +117,12 @@
   }
 
   :focus-visible {
-    outline: 2px solid rgba(133, 173, 255, 0.7);
+    outline: 2px solid rgb(var(--brand-400) / 0.75);
     outline-offset: 2px;
   }
 
   ::selection {
-    background: rgba(133, 173, 255, 0.35);
+    background: rgb(var(--brand-500) / 0.4);
   }
 
   img {
@@ -213,8 +220,9 @@
 @layer components {
   .card {
     @apply rounded-[1.25rem] border;
-    background: var(--app-bg-low);
+    background: linear-gradient(180deg, rgb(var(--surface-low) / 0.92), rgb(var(--surface-700) / 0.92));
     border-color: var(--app-ghost-border);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
 
   .card-interactive {
@@ -228,7 +236,7 @@
   @media (hover: hover) {
     .card-interactive:hover {
       background: var(--app-bg-high);
-      border-color: rgba(255, 255, 255, 0.12);
+      border-color: rgb(var(--brand-500) / 0.32);
     }
   }
 
@@ -238,20 +246,23 @@
   }
 
   .btn-primary {
-    @apply btn px-5 py-2.5 text-sm text-[#06142e];
-    background-image: linear-gradient(135deg, #9cc2ff 0%, var(--app-accent-strong) 100%);
-    box-shadow: 0 10px 28px rgba(110, 159, 255, 0.22);
+    @apply btn px-5 py-2.5 text-sm font-bold;
+    color: rgb(var(--on-brand));
+    background-image: linear-gradient(135deg, rgb(var(--brand-300)) 0%, rgb(var(--brand-500)) 100%);
+    box-shadow: 0 10px 28px rgb(var(--brand-500) / 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35);
   }
 
   .btn-secondary {
     @apply btn px-4 py-2.5 text-sm text-white;
     background: rgba(255, 255, 255, 0.07);
-    border: 1px solid var(--app-ghost-border);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
   }
 
   @media (hover: hover) {
     .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.11);
+      background: rgb(var(--brand-500) / 0.16);
+      border-color: rgb(var(--brand-500) / 0.4);
     }
   }
 
@@ -302,8 +313,8 @@
 
   .input:focus {
     outline: none;
-    border-color: rgba(133, 173, 255, 0.4);
-    box-shadow: 0 0 0 3px rgba(133, 173, 255, 0.1);
+    border-color: rgb(var(--brand-400) / 0.55);
+    box-shadow: 0 0 0 3px rgb(var(--brand-500) / 0.16);
   }
 
   .input:disabled {
@@ -358,6 +369,7 @@
     @apply backdrop-blur-xl;
     background: var(--app-glass);
     border: 1px solid var(--app-ghost-border);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .progress-bar {
@@ -402,10 +414,11 @@
   /* ---------- Shell: sidebar / rail ---------- */
   .shell-sidebar {
     background:
-      radial-gradient(120% 50% at 0% 0%, rgba(110, 159, 255, 0.1), transparent 60%),
-      radial-gradient(90% 40% at 100% 100%, rgba(172, 138, 255, 0.07), transparent 70%),
-      #0d0d10;
+      radial-gradient(120% 50% at 0% 0%, rgb(var(--brand-500) / 0.14), transparent 60%),
+      radial-gradient(90% 40% at 100% 100%, rgb(var(--accent-soft) / 0.07), transparent 70%),
+      rgb(var(--surface-800) / 0.9);
     border-right: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(20px);
   }
 
   .nav-row {
@@ -415,7 +428,7 @@
   .nav-row:focus-visible,
   .nav-sub:focus-visible,
   .rail-item:focus-visible {
-    outline: 2px solid rgba(133, 173, 255, 0.7);
+    outline: 2px solid rgb(var(--brand-400) / 0.75);
     outline-offset: -2px;
   }
 
@@ -453,14 +466,15 @@
   }
 
   .shell-tooltip {
-    @apply pointer-events-none fixed z-[130] -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-[#1e1e22] px-2.5 py-1.5 text-xs font-semibold text-white shadow-[0_10px_30px_rgba(0,0,0,0.45)];
+    @apply pointer-events-none fixed z-[130] -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-surface-500 px-2.5 py-1.5 text-xs font-semibold text-white shadow-[0_10px_30px_rgba(0,0,0,0.45)];
   }
 
   /* ---------- Player bar ---------- */
   .player-bar {
-    background: linear-gradient(180deg, rgba(18, 18, 21, 0.9) 0%, rgba(11, 11, 13, 0.97) 100%);
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.35);
+    background: linear-gradient(180deg, rgb(var(--surface-low) / 0.86) 0%, rgb(var(--surface-bg) / 0.97) 100%);
+    border-top: 1px solid rgb(var(--brand-500) / 0.14);
+    box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.4), 0 -1px 40px rgb(var(--brand-500) / 0.06);
+    backdrop-filter: blur(24px) saturate(140%);
   }
 
   /* Filled range input (volume): set --fill as a percentage inline. */
@@ -498,7 +512,7 @@
   }
 
   input[type='range'].range-fill:hover {
-    --fill-color: #85adff;
+    --fill-color: rgb(var(--brand-400));
   }
 
   /* Subtle pressed feedback for any custom tappable surface. */
@@ -546,11 +560,11 @@
 
   .text-gradient {
     @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(135deg, var(--app-accent) 0%, var(--app-secondary) 100%);
+    background-image: linear-gradient(135deg, rgb(var(--brand-300)) 0%, rgb(var(--brand-500)) 55%, rgb(var(--accent-soft)) 100%);
   }
 
   .glow-brand {
-    box-shadow: 0 0 20px rgba(133, 173, 255, 0.35);
+    box-shadow: 0 0 22px rgb(var(--brand-500) / 0.4);
   }
 
   .page-shell {
@@ -665,7 +679,7 @@
   @media (hover: hover) and (pointer: fine) {
     .card-interactive:hover {
       transform: translateY(-2px);
-      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(133, 173, 255, 0.08);
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38), 0 0 0 1px rgb(var(--brand-500) / 0.18), 0 10px 40px rgb(var(--brand-500) / 0.08);
     }
 
     .list-row {
@@ -679,7 +693,7 @@
 
     .btn-primary:hover {
       filter: brightness(1.06);
-      box-shadow: 0 14px 34px rgba(110, 159, 255, 0.32);
+      box-shadow: 0 14px 38px rgb(var(--brand-500) / 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.4);
     }
 
     .group:hover [data-cover] img {
@@ -718,5 +732,184 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ------------------------------------------------------------
+   Kreivo-style layer: ambient aurora backdrop, glass chips,
+   glowing hero surfaces, selected states.
+   ------------------------------------------------------------ */
+@layer components {
+  /* Animated ambient glow behind the whole app (pure CSS, GPU-only transforms). */
+  .ambient-bg {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 54% 0%, rgb(var(--brand-500) / 0.09), transparent 42%),
+      linear-gradient(180deg, rgb(var(--surface-deep)) 0%, rgb(var(--surface-bg)) 46%, rgb(var(--surface-bg)) 100%);
+  }
+
+  .ambient-bg::before,
+  .ambient-bg::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(70px);
+    will-change: transform;
+  }
+
+  .ambient-bg::before {
+    top: -18%;
+    left: -12%;
+    width: 62vmax;
+    height: 62vmax;
+    background: radial-gradient(circle, rgb(var(--brand-500) / 0.26), transparent 62%);
+    animation: auroraA 22s ease-in-out infinite;
+  }
+
+  .ambient-bg::after {
+    right: -16%;
+    bottom: -22%;
+    width: 56vmax;
+    height: 56vmax;
+    background: radial-gradient(circle, rgb(var(--accent-soft) / 0.16), transparent 62%);
+    animation: auroraB 28s ease-in-out infinite;
+  }
+
+  /* Soft film grain so large gradients never band. */
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Glass pill used for filters, tabs, meta info. */
+  .chip {
+    @apply inline-flex min-h-[2.25rem] select-none items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold text-gray-300 transition-[background-color,color,border-color,transform] duration-150 active:scale-95;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    backdrop-filter: blur(12px);
+  }
+
+  .chip[aria-pressed='true'],
+  .chip[data-active='true'] {
+    color: rgb(var(--on-brand));
+    background-image: linear-gradient(135deg, rgb(var(--brand-300)), rgb(var(--brand-500)));
+    border-color: transparent;
+    box-shadow: 0 6px 20px rgb(var(--brand-500) / 0.3);
+  }
+
+  @media (hover: hover) {
+    .chip:hover:not([aria-pressed='true']):not([data-active='true']) {
+      color: #fff;
+      background: rgb(var(--brand-500) / 0.14);
+      border-color: rgb(var(--brand-500) / 0.34);
+    }
+  }
+
+  /* Hero block with a coloured glow edge (profiles, song header). */
+  .hero-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1.75rem;
+    border: 1px solid rgb(var(--brand-500) / 0.2);
+    background:
+      radial-gradient(120% 90% at 0% 0%, rgb(var(--brand-500) / 0.2), transparent 60%),
+      radial-gradient(90% 70% at 100% 100%, rgb(var(--accent-soft) / 0.12), transparent 65%),
+      linear-gradient(180deg, rgb(var(--surface-low) / 0.9), rgb(var(--surface-700) / 0.95));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 30px 80px rgb(var(--brand-500) / 0.1);
+  }
+
+  .stat-tile {
+    @apply flex flex-col items-center justify-center rounded-2xl px-3 py-3 text-center;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .stat-value {
+    @apply font-headline text-xl font-extrabold leading-none tracking-tight text-white;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-label {
+    @apply mt-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500;
+  }
+
+  /* Ring + glow for the currently selected / playing item. */
+  .is-active-glow {
+    border-color: rgb(var(--brand-500) / 0.7) !important;
+    box-shadow: inset 0 0 0 1px rgb(var(--brand-500) / 0.55), 0 12px 40px rgb(var(--brand-500) / 0.18);
+  }
+
+  /* Underline tab strip (song detail, profile). */
+  .tab-strip {
+    @apply flex gap-1 rounded-full p-1;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .tab-pill {
+    @apply relative flex-1 select-none whitespace-nowrap rounded-full px-4 py-2 text-center text-[13px] font-bold text-gray-400 transition-colors duration-150;
+  }
+
+  .tab-pill[aria-selected='true'] {
+    color: rgb(var(--on-brand));
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Heading words rise in one by one. */
+  .reveal > * {
+    animation: revealUp 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .reveal > *:nth-child(2) { animation-delay: 70ms; }
+  .reveal > *:nth-child(3) { animation-delay: 140ms; }
+  .reveal > *:nth-child(4) { animation-delay: 210ms; }
+  .reveal > *:nth-child(5) { animation-delay: 280ms; }
+  .reveal > *:nth-child(n + 6) { animation-delay: 340ms; }
+
+  .mask-fade-b {
+    -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent);
+    mask-image: linear-gradient(180deg, #000 60%, transparent);
+  }
+}
+
+@keyframes revealUp {
+  from {
+    opacity: 0;
+    transform: translateY(0.7em);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes auroraA {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(6%, 8%, 0) scale(1.15); }
+}
+
+@keyframes auroraB {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.1); }
+  50% { transform: translate3d(-8%, -6%, 0) scale(0.95); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-bg::before,
+  .ambient-bg::after {
+    animation: none;
   }
 }

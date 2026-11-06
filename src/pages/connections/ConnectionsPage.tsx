@@ -120,7 +120,7 @@ export default function ConnectionsPage() {
                                         src={request.from_profile?.avatar_url}
                                         name={request.from_profile?.display_name}
                                         size="sm"
-                                        className="ring-2 ring-[#141416]"
+                                        className="ring-2 ring-surface-700"
                                     />
                                 ))}
                             </span>

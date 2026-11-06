@@ -6,6 +6,7 @@ import { BottomNav } from '@components/layout/Navigation'
 import { GroupSwitcher } from '@components/layout/GroupSwitcher'
 import { PageSkeleton } from '@components/layout/RouteFallback'
 import { Sidebar } from '@components/layout/Sidebar'
+import { AmbientBackground } from '@components/ui/Brand'
 import { useShellStore } from '@components/layout/shell.store'
 import { Avatar } from '@components/common/Avatar'
 import { useToast } from '@components/ui/Toast'
@@ -60,7 +61,7 @@ export const AppLayout: React.FC = () => {
     return (
         <MotionConfig reducedMotion="user">
             <div className="relative h-dvh overflow-hidden bg-background text-on-background">
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,rgba(110,159,255,0.14),transparent_70%)] md:left-[var(--sidebar-w)]" />
+                <AmbientBackground />
 
                 <Sidebar />
 
@@ -68,7 +69,7 @@ export const AppLayout: React.FC = () => {
                     className={cn(
                         'fixed left-0 right-0 top-0 z-50 pt-[env(safe-area-inset-top)] safe-left safe-right md:left-[var(--sidebar-w)] md:pl-0',
                         'transition-[left,background-color,border-color] duration-300 ease-[var(--shell-ease)]',
-                        scrolled ? 'border-b border-white/[0.06] bg-[#0b0b0d]/85 backdrop-blur-2xl' : 'border-b border-transparent bg-transparent'
+                        scrolled ? 'border-b border-white/[0.06] bg-background/80 backdrop-blur-2xl' : 'border-b border-transparent bg-transparent'
                     )}
                 >
                     <div
@@ -116,7 +117,7 @@ export const AppLayout: React.FC = () => {
                             >
                                 <Bell className="h-[22px] w-[22px]" />
                                 {unread > 0 ? (
-                                    <span className="absolute right-1.5 top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand-400 px-1 text-[10px] font-bold leading-none text-black ring-2 ring-[#0b0b0d]">
+                                    <span className="absolute right-1.5 top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand-500 px-1 text-[10px] font-bold leading-none text-white shadow-glow-brand ring-2 ring-background">
                                         {unread > 9 ? '9+' : unread}
                                     </span>
                                 ) : null}

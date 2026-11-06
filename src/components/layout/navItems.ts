@@ -53,7 +53,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Inicio',
         to: ROUTES.DASHBOARD,
         icon: Home,
-        accent: '#9cc2ff',
+        accent: 'rgb(var(--brand-300))',
         matchSelf: (pathname) => pathname === ROUTES.DASHBOARD,
     },
     {
@@ -61,7 +61,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Música',
         to: ROUTES.MUSIC,
         icon: Library,
-        accent: '#85adff',
+        accent: 'rgb(var(--brand-400))',
         matchSelf: () => false,
         children: [
             {
@@ -89,7 +89,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Social',
         to: ROUTES.SOCIAL,
         icon: Users,
-        accent: '#ff8fd0',
+        accent: 'rgb(var(--accent-soft))',
         matchSelf: () => false,
         children: [
             { key: 'feed', label: 'Feed', to: ROUTES.SOCIAL, icon: Newspaper, match: (pathname) => starts(pathname, ROUTES.SOCIAL) },
@@ -116,7 +116,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Perfil',
         to: ROUTES.PROFILE,
         icon: User,
-        accent: '#ac8aff',
+        accent: 'rgb(var(--brand-300))',
         matchSelf: (pathname) => pathname === ROUTES.PROFILE,
         children: [
             {

@@ -107,7 +107,7 @@ export const FullPlayer: React.FC = () => {
                     dragConstraints={{ top: 0, bottom: 0 }}
                     dragElastic={{ top: 0, bottom: 0.7 }}
                     onDragEnd={handleSheetDragEnd}
-                    className="fixed inset-0 z-[90] overflow-hidden bg-[#0b0b0d] text-white"
+                    className="fixed inset-0 z-[90] overflow-hidden bg-background text-white"
                 >
                     {/* Backdrop: blurred artwork + colour wash from the cover. */}
                     <div className="pointer-events-none absolute inset-0">
@@ -117,7 +117,7 @@ export const FullPlayer: React.FC = () => {
                         <div
                             className="absolute inset-0 transition-[background] duration-700"
                             style={{
-                                background: `linear-gradient(180deg, ${tint ? `color-mix(in srgb, ${tint} 55%, transparent)` : 'rgba(55,90,170,0.35)'} 0%, rgba(11,11,13,0.82) 55%, #0b0b0d 100%)`,
+                                background: `linear-gradient(180deg, ${tint ? `color-mix(in srgb, ${tint} 55%, transparent)` : 'rgb(var(--brand-600) / 0.38)'} 0%, rgb(var(--surface-bg) / 0.82) 55%, rgb(var(--surface-bg)) 100%)`,
                             }}
                         />
                     </div>

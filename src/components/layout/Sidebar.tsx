@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, PanelLeftClose, PanelLeftOpen, Pause, Play } from 'lucide-react'
 import { Cover, EqualizerBars } from '@components/music/Cover'
+import { BrandLockup, BrandMark } from '@components/ui/Brand'
 import { GroupSwitcher } from '@components/layout/GroupSwitcher'
 import { NAV_SECTIONS, resolveActiveNav, type NavLinkItem, type NavSection } from '@components/layout/navItems'
 import { useShellStore } from '@components/layout/shell.store'
@@ -225,11 +226,7 @@ const ActivePill: React.FC<{ accent: string }> = ({ accent }) => (
     </>
 )
 
-const Wordmark: React.FC = () => (
-    <span className="font-display bg-gradient-to-r from-blue-200 via-brand-300 to-brand-500 bg-clip-text text-[1.6rem] font-black italic tracking-[-0.05em] text-transparent">
-        The Appden
-    </span>
-)
+const Wordmark: React.FC = () => <BrandLockup />
 
 /* ------------------------------------------------------------------ */
 /* Icon rail (tablet, or folded desktop sidebar)                        */
@@ -277,9 +274,9 @@ const RailContent: React.FC<{ canExpand: boolean }> = ({ canExpand }) => {
                 <Link
                     to={ROUTES.DASHBOARD}
                     aria-label="The Appden, inicio"
-                    className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-[#9cc2ff] to-[#5d7bff] font-display text-xl font-black italic text-[#06142e] shadow-[0_10px_28px_rgba(110,159,255,0.3)] transition-transform duration-150 hover:scale-105 active:scale-95"
+                    className="grid h-11 w-11 place-items-center rounded-2xl transition-transform duration-150 hover:scale-110 hover:rotate-90 active:scale-95"
                 >
-                    A
+                    <BrandMark className="h-9 w-9" />
                 </Link>
             </div>
 
@@ -317,7 +314,7 @@ const RailContent: React.FC<{ canExpand: boolean }> = ({ canExpand }) => {
                                 ) : null}
                                 <Icon className="relative h-[21px] w-[21px]" strokeWidth={isActive ? 2.25 : 1.9} />
                                 {hasBadge ? (
-                                    <span className="absolute -right-0.5 -top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand-400 px-1 text-[10px] font-bold leading-none text-black ring-2 ring-[#0d0d10]">
+                                    <span className="absolute -right-0.5 -top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-surface-800">
                                         {unread > 9 ? '9+' : unread}
                                     </span>
                                 ) : null}
@@ -410,8 +407,8 @@ const NowPlayingCard: React.FC = () => {
                     className="relative mx-3 mb-3 shrink-0 overflow-hidden rounded-2xl border border-white/[0.08] shadow-[0_18px_40px_rgba(0,0,0,0.35)]"
                     style={{
                         background: tint
-                            ? `linear-gradient(150deg, color-mix(in srgb, ${tint} 40%, #141417) 0%, #121215 85%)`
-                            : 'linear-gradient(150deg, #1b2340 0%, #121215 85%)',
+                            ? `linear-gradient(150deg, color-mix(in srgb, ${tint} 40%, rgb(var(--surface-700))) 0%, rgb(var(--surface-800)) 85%)`
+                            : 'linear-gradient(150deg, rgb(var(--brand-900)) 0%, rgb(var(--surface-800)) 85%)',
                     }}
                 >
                     <button
@@ -433,7 +430,7 @@ const NowPlayingCard: React.FC = () => {
                     <button
                         type="button"
                         onClick={() => void togglePlayPause()}
-                        className="absolute right-3 top-[1.375rem] grid h-9 w-9 place-items-center rounded-full bg-white text-black shadow-[0_6px_16px_rgba(0,0,0,0.35)] transition-transform duration-150 hover:scale-105 active:scale-95"
+                        className="absolute right-3 top-[1.375rem] grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand shadow-glow-brand transition-transform duration-150 hover:scale-105 active:scale-95"
                         aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                     >
                         {isPlaying ? <Pause className="h-4 w-4 fill-current" /> : <Play className="ml-0.5 h-4 w-4 fill-current" />}
@@ -445,7 +442,7 @@ const NowPlayingCard: React.FC = () => {
                     ) : null}
                     <div className="absolute inset-x-0 bottom-0 h-[2px] bg-white/[0.06]">
                         <div
-                            className="h-full bg-white/70 transition-[width] duration-300 ease-linear"
+                            className="h-full bg-brand-400 transition-[width] duration-300 ease-linear"
                             style={{ width: `${duration > 0 ? Math.min((currentTime / duration) * 100, 100) : 0}%` }}
                         />
                     </div>

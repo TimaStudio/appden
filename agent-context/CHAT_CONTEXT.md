@@ -278,6 +278,18 @@ This file captures decisions and incidents from this collaboration thread so fut
 
 - storage cover bucket name is `covers`
 - keep buckets private and use signed URLs
+
+21. 2026-10-28 future storage decision:
+- Supabase Free is too restrictive for large WAV uploads because Storage has a
+  1 GB total quota and a 50 MB per-file limit.
+- Do not migrate immediately. Record Cloudflare R2 as the preferred future
+  external object store, with Backblaze B2 as the fallback.
+- Keep Supabase for Auth, PostgreSQL, groups, RLS, and media metadata.
+- Future R2 integration must use private storage, Vercel serverless signed
+  upload/playback URLs, server-only credentials, stable object keys, and
+  compatibility with existing Supabase Storage objects.
+- Only increase the frontend audio limit after the external provider is
+  configured and a real large-file upload/playback flow has been validated.
 - preserve group privacy through RLS as default posture
 - keep the global player modular under `src/features/player`, but prioritize simple playback over experimental audio features
 - keep social/changelog/reports modular under `src/features/*`

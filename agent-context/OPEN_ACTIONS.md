@@ -19,6 +19,17 @@
    - mixed existing user + manual external artist
 13. Keep one confirmed QA account available so browser smoke does not depend on live signup email confirmation/rate limits.
 14. Re-verify desktop mouse-wheel scrolling on a fully authenticated long page after the new `AppLayout` scroll-container change.
+15. External media storage (Cloudflare R2): CODE DONE (r2-worker/, src/lib/storage/r2.ts, adapter in client.ts),
+   DEPLOY PENDING as of 2026-11-05 — run `npm run storage:setup` (needs Cloudflare login), set
+   `VITE_STORAGE_URL` in Vercel, then `npm run storage:migrate` once Supabase egress resets. See docs/R2_SETUP.md.
+   Original scope:
+   - evaluate Cloudflare R2 first and Backblaze B2 as fallback
+   - keep Supabase for Auth, PostgreSQL, groups, RLS, and metadata
+   - add private-bucket signed upload/playback endpoints through Vercel
+   - keep provider credentials server-side
+   - support stable object keys and on-demand playback URLs
+   - migrate or preserve compatibility with existing Supabase Storage paths
+   - raise the current 50 MB audio limit only after end-to-end validation
 
 ## Medium priority
 

@@ -14,8 +14,8 @@ export default defineConfig({
                 name: 'The Appden',
                 short_name: 'Appden',
                 description: 'Tu espacio privado con amigos: musica, deudas y mas.',
-                theme_color: '#0f0f0f',
-                background_color: '#0f0f0f',
+                theme_color: '#0f0a08',
+                background_color: '#0f0a08',
                 display: 'standalone',
                 orientation: 'portrait',
                 scope: '/',
@@ -45,6 +45,22 @@ export default defineConfig({
                 clientsClaim: true,
                 skipWaiting: true,
                 runtimeCaching: [
+                    {
+                        // Covers and avatars (R2 Worker or Supabase Storage). The signature in the query string
+                        // changes daily, so match ignoring it: the same image is never downloaded twice.
+                        // CORS-mode requests (colour extraction) are left to the network to avoid opaque-response clashes.
+                        urlPattern: ({ url, request }: { url: URL; request: Request }) =>
+                            request.destination === 'image' &&
+                            request.mode !== 'cors' &&
+                            /^\/(f\/|storage\/v1\/object\/sign\/)(covers|avatars)\//.test(url.pathname),
+                        handler: 'CacheFirst',
+                        options: {
+                            cacheName: 'appden-images',
+                            expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
+                            cacheableResponse: { statuses: [0, 200] },
+                            matchOptions: { ignoreSearch: true },
+                        },
+                    },
                     {
                         // Never cache auth/session endpoints.
                         urlPattern: /^https:\/\/.*\.supabase\.co\/auth\/v1\/.*/i,

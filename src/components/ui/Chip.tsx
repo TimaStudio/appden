@@ -8,9 +8,9 @@ interface ChipProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const chipClass: Record<ChipVariant, string> = {
-    default: 'badge bg-white/6 text-gray-300 border border-white/10',
-    active: 'badge-brand',
-    muted: 'badge bg-surface-700 text-gray-400 border border-white/5',
+    default: 'chip',
+    active: 'chip !border-brand-500/40 !bg-brand-500/15 !text-brand-200',
+    muted: 'chip !text-gray-400',
 }
 
 export const Chip = React.forwardRef<HTMLButtonElement, ChipProps>(

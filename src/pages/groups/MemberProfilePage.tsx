@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Check, ChevronLeft, ChevronRight, Clock3, Music, Music2, PencilLine, Scale, UserPlus, Users } from 'lucide-react'
 import { usePlayerStore } from '@app/store/player.store'
-import { Avatar } from '@components/common/Avatar'
+import { ProfileHero } from '@components/profile/ProfileHero'
 import { RoleTag } from '@components/groups/GroupMemberList'
 import { YouPill } from '@components/social/PersonRow'
 import { SongCard } from '@components/music/SongCard'
@@ -57,12 +57,17 @@ export default function MemberProfilePage() {
     })
     const profile = member?.profile ?? profileQuery.data ?? null
 
-    const songsQuery = useQuery({
-        queryKey: ['songs-by-owner', groupId, memberId],
-        queryFn: () => songsService.getSongsByOwner(groupId, memberId, viewerId ?? ''),
+    // Same cache entry as the music library: no extra download per profile visit.
+    const libraryQuery = useQuery({
+        queryKey: ['songs', groupId, viewerId],
+        queryFn: () => songsService.getSongs(groupId, viewerId ?? ''),
         enabled: !!viewerId && !!member,
     })
-    const songs = songsQuery.data ?? []
+    const songsQuery = libraryQuery
+    const songs = React.useMemo(
+        () => (libraryQuery.data ?? []).filter((song) => song.uploaded_by === memberId || song.owners?.some((owner) => owner.user_id === memberId)),
+        [libraryQuery.data, memberId]
+    )
 
     const debtsQuery = useQuery({
         queryKey: ['debts', groupId],
@@ -165,57 +170,57 @@ export default function MemberProfilePage() {
 
     return (
         <div className="page-shell animate-fade-in">
-            <header className="page-hero">
-                {backButton}
-                <div className="flex items-center gap-4">
-                    <Avatar src={profile.avatar_url} name={profile.display_name} size="xl" className="h-20 w-20 text-2xl md:h-24 md:w-24" />
-                    <div className="min-w-0 flex-1">
-                        <h1 className="page-title break-words">{profile.display_name}</h1>
-                        <p className="mt-1 truncate text-sm text-gray-400">
-                            {profile.username ? `@${profile.username}` : 'Sin nombre de usuario'}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                            <RoleTag role={role} />
-                            {isMe ? <YouPill /> : null}
-                            <span className="text-xs text-gray-500">en {group.name} desde {formatDate(member.joined_at)}</span>
-                        </div>
-                    </div>
-                </div>
-                {profile.bio ? <p className="mt-4 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-gray-300">{profile.bio}</p> : null}
-
-                <div className="mt-5 grid grid-cols-2 gap-2">
-                    {isMe ? (
-                        <Link to={ROUTES.PROFILE} className="btn-secondary">
-                            <PencilLine className="h-4 w-4" />
-                            Editar perfil
+            {backButton}
+            <ProfileHero
+                name={profile.display_name}
+                username={profile.username}
+                avatarUrl={profile.avatar_url}
+                bio={profile.bio}
+                badges={
+                    <>
+                        <RoleTag role={role} />
+                        {isMe ? <YouPill /> : null}
+                        <span className="chip !min-h-[1.9rem] !text-xs">
+                            En {group.name} desde {formatDate(member.joined_at)}
+                        </span>
+                    </>
+                }
+                stats={[{ label: songs.length === 1 ? 'Canción aquí' : 'Canciones aquí', value: songs.length }]}
+                actions={
+                    <>
+                        {isMe ? (
+                            <Link to={ROUTES.PROFILE} className="btn-primary">
+                                <PencilLine className="h-4 w-4" />
+                                Editar perfil
+                            </Link>
+                        ) : relation.kind === 'friend' ? (
+                            <span className="btn-secondary pointer-events-none border-emerald-400/25 text-emerald-200">
+                                <Check className="h-4 w-4" />
+                                Amigos
+                            </span>
+                        ) : relation.kind === 'outgoing' ? (
+                            <span className="btn-secondary pointer-events-none text-gray-300">
+                                <Clock3 className="h-4 w-4" />
+                                Solicitud enviada
+                            </span>
+                        ) : relation.kind === 'incoming' ? (
+                            <button type="button" className="btn-primary" disabled={accept.isPending} onClick={() => accept.mutate(relation.request)}>
+                                <Check className="h-4 w-4" />
+                                Aceptar solicitud
+                            </button>
+                        ) : (
+                            <button type="button" className="btn-primary" disabled={send.isPending} onClick={() => send.mutate(person)}>
+                                <UserPlus className="h-4 w-4" />
+                                {send.isPending ? 'Enviando…' : 'Añadir amigo'}
+                            </button>
+                        )}
+                        <Link to={ROUTES.ARTIST(memberId)} className="btn-secondary">
+                            <Music2 className="h-4 w-4" />
+                            Ver como artista
                         </Link>
-                    ) : relation.kind === 'friend' ? (
-                        <span className="btn-secondary pointer-events-none border-emerald-400/25 text-emerald-200">
-                            <Check className="h-4 w-4" />
-                            Amigos
-                        </span>
-                    ) : relation.kind === 'outgoing' ? (
-                        <span className="btn-secondary pointer-events-none text-gray-300">
-                            <Clock3 className="h-4 w-4" />
-                            Solicitud enviada
-                        </span>
-                    ) : relation.kind === 'incoming' ? (
-                        <button type="button" className="btn-primary" disabled={accept.isPending} onClick={() => accept.mutate(relation.request)}>
-                            <Check className="h-4 w-4" />
-                            Aceptar solicitud
-                        </button>
-                    ) : (
-                        <button type="button" className="btn-primary" disabled={send.isPending} onClick={() => send.mutate(person)}>
-                            <UserPlus className="h-4 w-4" />
-                            {send.isPending ? 'Enviando…' : 'Añadir amigo'}
-                        </button>
-                    )}
-                    <Link to={ROUTES.ARTIST(memberId)} className="btn-secondary">
-                        <Music2 className="h-4 w-4" />
-                        Ver como artista
-                    </Link>
-                </div>
-            </header>
+                    </>
+                }
+            />
 
             {!isMe ? (
                 <section>
@@ -285,7 +290,7 @@ export default function MemberProfilePage() {
                                     </Link>
                                 )
                             })}
-                            <button type="button" onClick={openDebtsPage} className="list-row text-[15px] font-medium text-brand-300">
+                            <button type="button" onClick={openDebtsPage} className="list-row text-[15px] font-bold text-brand-300">
                                 <span className="flex-1">Ver todas las cuentas del grupo</span>
                                 <ChevronRight className="h-5 w-5 shrink-0 text-gray-600" />
                             </button>

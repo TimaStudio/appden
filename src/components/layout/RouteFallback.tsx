@@ -1,4 +1,5 @@
 import React from 'react'
+import { AmbientBackground, BrandMark } from '@components/ui/Brand'
 
 const Bone: React.FC<{ className?: string }> = ({ className }) => <div className={`skeleton-shimmer rounded-xl ${className ?? ''}`} aria-hidden="true" />
 
@@ -34,11 +35,10 @@ export const PageSkeleton: React.FC = () => (
 /** Full-screen branded splash for routes rendered outside the shell (login, shared links). */
 export const AppSplash: React.FC = () => (
     <div className="grid min-h-dvh place-items-center bg-background" role="status" aria-label="Cargando">
-        <div className="pointer-events-none fixed inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,rgba(110,159,255,0.14),transparent_70%)]" />
+        <AmbientBackground className="fixed" />
         <div className="relative flex flex-col items-center gap-5">
-            <span className="font-display animate-pulse bg-gradient-to-r from-blue-200 to-blue-500 bg-clip-text text-3xl font-black italic tracking-[-0.05em] text-transparent">
-                The Appden
-            </span>
+            <BrandMark className="h-14 w-14" spin />
+            <span className="font-headline text-sm font-extrabold uppercase tracking-[0.3em] text-white/80">The Appden</span>
             <span className="skeleton-shimmer h-1 w-24 rounded-full" />
         </div>
     </div>

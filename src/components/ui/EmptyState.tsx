@@ -28,14 +28,14 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             className
         )}
     >
-        <div className="pointer-events-none absolute left-1/2 top-0 h-32 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-500/15 blur-3xl" />
+        <div className="pointer-events-none absolute left-1/2 top-0 h-32 w-56 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-500/20 blur-3xl" />
 
         {icon ? (
-            <div className="relative mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-white/[0.06] text-gray-400">
+            <div className="relative mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-brand-500/12 text-brand-300 ring-1 ring-brand-500/20">
                 {icon}
             </div>
         ) : null}
-        <h3 className="relative text-base font-semibold text-white">{title}</h3>
+        <h3 className="relative text-base font-bold text-white">{title}</h3>
         {description ? (
             <p className="relative mt-1.5 max-w-xs text-sm leading-relaxed text-gray-400">{description}</p>
         ) : null}

@@ -52,7 +52,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
 
                 <button
                     onClick={onPlayPause}
-                    className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-white text-black shadow-[0_16px_40px_rgba(0,0,0,0.35)] transition-transform active:scale-95"
+                    className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand shadow-[0_16px_44px_rgb(var(--brand-500)/0.45)] transition-transform active:scale-95"
                     aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                 >
                     {isPlaying ? <Pause className="h-8 w-8 fill-current" /> : <Play className="ml-1 h-8 w-8 fill-current" />}

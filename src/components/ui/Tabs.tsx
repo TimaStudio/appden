@@ -31,7 +31,7 @@ export const Tabs: React.FC<TabsProps> = ({ items, active, onChange, className, 
             <div
                 role="tablist"
                 className={cn(
-                    'inline-flex min-w-full gap-1 rounded-full border border-white/[0.06] bg-white/[0.04] p-1 md:min-w-0',
+                    'inline-flex min-w-full gap-1 rounded-full border border-white/[0.08] bg-white/[0.045] p-1 backdrop-blur-xl md:min-w-0',
                     stretch && 'w-max md:min-w-full'
                 )}
             >
@@ -42,22 +42,22 @@ export const Tabs: React.FC<TabsProps> = ({ items, active, onChange, className, 
                             {isActive ? (
                                 <motion.span
                                     layoutId={`tab-pill-${layoutId}`}
-                                    className="absolute inset-0 rounded-full bg-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                                    className="absolute inset-0 rounded-full bg-gradient-to-br from-brand-300 to-brand-500 shadow-[0_6px_20px_rgb(var(--brand-500)/0.32)]"
                                     transition={{ type: 'spring', stiffness: 400, damping: 34 }}
                                 />
                             ) : null}
                             <span className="relative z-[1]">{item.label}</span>
                             {item.badge ? (
-                                <span className="relative z-[1] grid h-5 min-w-5 place-items-center rounded-full bg-brand-400 px-1.5 text-[10px] font-bold text-black">
+                                <span className="relative z-[1] grid h-5 min-w-5 place-items-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-white">
                                     {item.badge > 99 ? '99+' : item.badge}
                                 </span>
                             ) : null}
                         </>
                     )
                     const tabClass = cn(
-                        'relative inline-flex min-h-[2.375rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 text-sm font-semibold transition-colors',
+                        'relative inline-flex min-h-[2.375rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 text-sm font-bold transition-colors',
                         stretch && 'flex-1',
-                        isActive ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+                        isActive ? 'text-on-brand' : 'text-gray-400 hover:text-white'
                     )
 
                     if (item.href) {

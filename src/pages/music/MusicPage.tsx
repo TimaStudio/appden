@@ -126,7 +126,7 @@ const MusicPage: React.FC = () => {
                                 value={search}
                                 onChange={(event) => setSearch(event.target.value)}
                                 placeholder="Buscar título, artista o álbum"
-                                className="input pl-11 pr-11"
+                                className="input !rounded-full pl-11 pr-11"
                                 aria-label="Buscar canciones"
                             />
                             {search ? (

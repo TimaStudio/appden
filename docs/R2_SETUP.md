@@ -29,6 +29,22 @@ Mientras `VITE_STORAGE_URL` no esté configurada, la app sigue usando Supabase S
 
 Cloudflare pide un método de pago para activar R2 aunque te quedes dentro del plan gratuito.
 
+## Atajo: un solo comando
+
+Si ya tienes cuenta de Cloudflare con R2 activado y `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
+en `.env.local`, este comando hace los pasos 1, 2 y 3 por ti (instala wrangler, abre el login de
+Cloudflare, crea el bucket, genera los secretos, despliega el Worker y escribe `VITE_STORAGE_URL`
+y `STORAGE_ADMIN_SECRET` en `.env.local`):
+
+```bash
+npm run storage:setup
+# opcional: limitar los orígenes que pueden llamar al Worker
+npm run storage:setup -- --origins=https://tu-app.vercel.app,http://127.0.0.1:4173
+```
+
+Después solo queda poner `VITE_STORAGE_URL` en Vercel (y redesplegar) y ejecutar el paso 4
+(`npm run storage:migrate`). Los pasos manuales de abajo siguen valiendo si prefieres hacerlo a mano.
+
 ## 1. Crear el bucket
 
 1. Crea una cuenta gratuita en [dash.cloudflare.com](https://dash.cloudflare.com).

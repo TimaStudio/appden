@@ -1,7 +1,7 @@
 ﻿import React from 'react'
 import { Heart, Pencil, Reply, Save, Send, Trash2, X } from 'lucide-react'
 import { Avatar } from '@components/common/Avatar'
-import { formatRelative } from '@lib/utils'
+import { cn, formatRelative } from '@lib/utils'
 import { MentionSuggestions } from '@features/social/components/MentionSuggestions'
 import type { MentionOption } from '@features/social/types'
 import type { SongComment } from '@/types'
@@ -76,18 +76,15 @@ export const SongCommentThread: React.FC<SongCommentThreadProps> = ({
     const isEditing = editingCommentId === comment.id
 
     return (
-        <article
-            className="rounded-xl border border-surface-500 bg-surface-700/60 p-3"
-            style={{ marginLeft: `${depth * 12}px` }}
-        >
-            <div className="flex items-start gap-2">
-                <Avatar src={comment.profile?.avatar_url} name={comment.profile?.display_name} size="sm" />
+        <article className={cn(depth === 0 ? 'card p-3.5 sm:p-4' : 'border-l-2 border-brand-500/25 pl-3')}>
+            <div className="flex items-start gap-3">
+                <Avatar src={comment.profile?.avatar_url} name={comment.profile?.display_name} size={depth === 0 ? 'md' : 'sm'} />
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium text-white truncate">
+                        <p className="truncate text-sm font-bold text-white">
                             {comment.profile?.display_name ?? 'Usuario'}
                         </p>
-                        <p className="text-[11px] text-gray-500 whitespace-nowrap">
+                        <p className="whitespace-nowrap text-[11px] font-medium text-gray-500">
                             {formatRelative(comment.created_at)}
                         </p>
                     </div>
@@ -120,23 +117,23 @@ export const SongCommentThread: React.FC<SongCommentThreadProps> = ({
                             </div>
                         </div>
                     ) : (
-                        <p className="text-sm text-gray-200 mt-1 whitespace-pre-wrap break-words leading-relaxed">
+                        <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-gray-200">
                             {renderCommentBody(comment.body, onJumpToTimestamp)}
                         </p>
                     )}
 
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <div className="-ml-2 mt-1.5 flex flex-wrap items-center gap-0.5 text-xs font-semibold">
                         <button
                             type="button"
                             onClick={() => onToggleCommentLike(comment.id)}
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 border transition-colors ${
-                                likedComment
-                                    ? 'border-pink-400/60 text-pink-300 bg-pink-500/10'
-                                    : 'border-surface-400 text-gray-300 bg-surface-600/40'
-                            }`}
+                            className={cn(
+                                'inline-flex min-h-[2rem] items-center gap-1.5 rounded-full px-2.5 transition-colors hover:bg-white/[0.06]',
+                                likedComment ? 'text-pink-300' : 'text-gray-400 hover:text-white'
+                            )}
+                            aria-pressed={likedComment}
                         >
-                            <Heart className={`w-3.5 h-3.5 ${likedComment ? 'fill-current' : ''}`} />
-                            {commentLikeCount}
+                            <Heart className={cn('h-3.5 w-3.5', likedComment && 'fill-current')} />
+                            {commentLikeCount > 0 ? commentLikeCount : null}
                         </button>
 
                         {canReply ? (
@@ -148,7 +145,7 @@ export const SongCommentThread: React.FC<SongCommentThreadProps> = ({
                                         `@${buildMentionToken(comment.profile?.display_name ?? 'usuario')} `
                                     )
                                 }
-                                className="inline-flex items-center gap-1 rounded-full px-2 py-1 border border-surface-400 text-gray-300 bg-surface-600/40"
+                                className="inline-flex min-h-[2rem] items-center gap-1.5 rounded-full px-2.5 text-gray-400 transition-colors hover:bg-white/[0.06] hover:text-white"
                             >
                                 <Reply className="w-3.5 h-3.5" /> Responder
                             </button>
@@ -158,7 +155,7 @@ export const SongCommentThread: React.FC<SongCommentThreadProps> = ({
                             <button
                                 type="button"
                                 onClick={() => onStartEditing(comment.id, comment.body)}
-                                className="inline-flex items-center gap-1 rounded-full px-2 py-1 border border-surface-400 text-gray-300 bg-surface-600/40"
+                                className="inline-flex min-h-[2rem] items-center gap-1.5 rounded-full px-2.5 text-gray-400 transition-colors hover:bg-white/[0.06] hover:text-white"
                             >
                                 <Pencil className="w-3.5 h-3.5" /> Editar
                             </button>
@@ -168,7 +165,7 @@ export const SongCommentThread: React.FC<SongCommentThreadProps> = ({
                             <button
                                 type="button"
                                 onClick={() => onDeleteComment(comment.id)}
-                                className="inline-flex items-center gap-1 rounded-full px-2 py-1 border border-red-500/30 text-red-300 bg-red-500/10"
+                                className="inline-flex min-h-[2rem] items-center gap-1.5 rounded-full px-2.5 text-gray-500 transition-colors hover:bg-red-500/10 hover:text-red-300"
                             >
                                 <Trash2 className="w-3.5 h-3.5" /> Eliminar
                             </button>
@@ -224,7 +221,7 @@ export const SongCommentThread: React.FC<SongCommentThreadProps> = ({
             </div>
 
             {children.length > 0 ? (
-                <div className="mt-3 space-y-2">
+                <div className="mt-3 space-y-3 pl-1 sm:pl-3">
                     {children.map((child) => (
                         <SongCommentThread
                             key={child.id}

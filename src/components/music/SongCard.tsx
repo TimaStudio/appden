@@ -61,7 +61,7 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onPlay, showArtist = t
                 {...longPress}
                 className={cn(
                     'group flex select-none items-center gap-3 rounded-2xl py-1.5 pl-1.5 pr-0.5 transition-[background-color,transform] duration-200 [-webkit-touch-callout:none] active:scale-[0.985]',
-                    isCurrentSong ? 'bg-brand-400/[0.08]' : 'active:bg-white/[0.05] md:hover:translate-x-0.5 md:hover:bg-white/[0.04]'
+                    isCurrentSong ? 'bg-brand-500/[0.1] shadow-[inset_3px_0_0_rgb(var(--brand-500))]' : 'active:bg-white/[0.05] md:hover:translate-x-0.5 md:hover:bg-white/[0.045]'
                 )}
             >
                 {index != null ? (
@@ -77,7 +77,7 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onPlay, showArtist = t
                     aria-label={isThisPlaying ? `Pausar ${song.title}` : `Reproducir ${song.title}`}
                 >
                     {hideCover ? null : (
-                        <Cover src={song.cover_url} alt="" seed={song.id} className="h-12 w-12 rounded-xl">
+                        <Cover src={song.cover_url} alt="" seed={song.id} className="h-12 w-12 rounded-xl shadow-[0_6px_16px_rgba(0,0,0,0.4)] ring-1 ring-white/10">
                             {isCurrentSong && index == null ? (
                                 <span className="absolute inset-0 grid place-items-center bg-black/45 text-white">
                                     <EqualizerBars playing={isThisPlaying} />
@@ -90,7 +90,7 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onPlay, showArtist = t
                         </Cover>
                     )}
                     <span className="min-w-0 flex-1">
-                        <span className={cn('block truncate text-[15px] font-semibold', isCurrentSong ? 'text-brand-200' : 'text-white')}>
+                        <span className={cn('block truncate text-[15px] font-bold', isCurrentSong ? 'text-brand-300' : 'text-white')}>
                             {song.title}
                         </span>
                         <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-gray-400">

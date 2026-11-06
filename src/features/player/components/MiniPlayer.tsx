@@ -72,8 +72,8 @@ const PhoneMiniPlayer: React.FC = () => {
                 className="relative mx-auto h-16 w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 shadow-[0_16px_50px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
                 style={{
                     background: tint
-                        ? `linear-gradient(90deg, color-mix(in srgb, ${tint} 38%, #121214) 0%, rgba(20,20,23,0.96) 100%)`
-                        : 'rgba(24,24,27,0.96)',
+                        ? `linear-gradient(90deg, color-mix(in srgb, ${tint} 38%, rgb(var(--surface-800))) 0%, rgb(var(--surface-700) / 0.96) 100%)`
+                        : 'rgb(var(--surface-600) / 0.96)',
                 }}
             >
                 <div className="flex h-full items-center gap-1 pr-1.5">
@@ -109,7 +109,7 @@ const PhoneMiniPlayer: React.FC = () => {
                 </div>
 
                 <div className="absolute inset-x-3 bottom-0 h-[2px] overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-white/85 transition-[width] duration-300 ease-linear" style={{ width: `${progress}%` }} />
+                    <div className="h-full rounded-full bg-gradient-to-r from-brand-400 to-brand-300 transition-[width] duration-300 ease-linear" style={{ width: `${progress}%` }} />
                 </div>
             </div>
         </motion.div>
@@ -237,7 +237,7 @@ const PlayerBar: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={() => void togglePlayPause()}
-                                className="grid h-10 w-10 place-items-center rounded-full bg-white text-black shadow-[0_8px_20px_rgba(0,0,0,0.35)] transition-transform duration-150 hover:scale-105 active:scale-95"
+                                className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand shadow-glow-brand transition-transform duration-150 hover:scale-105 active:scale-95"
                                 aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                             >
                                 {isPlaying ? <Pause className="h-[18px] w-[18px] fill-current" /> : <Play className="ml-0.5 h-[18px] w-[18px] fill-current" />}

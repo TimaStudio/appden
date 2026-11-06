@@ -15,7 +15,7 @@ export const BottomNav: React.FC = () => {
     return (
         <nav
             aria-label="Navegación principal"
-            className="fixed inset-x-0 bottom-0 z-[60] border-t border-white/[0.06] bg-[#0b0b0d]/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl safe-left safe-right md:hidden"
+            className="fixed inset-x-0 bottom-0 z-[60] border-t border-brand-500/15 bg-background/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl safe-left safe-right md:hidden"
         >
             <div className="mx-auto grid h-16 max-w-lg grid-cols-5">
                 {NAV_SECTIONS.map(({ key, icon: Icon, label, to, accent }) => {

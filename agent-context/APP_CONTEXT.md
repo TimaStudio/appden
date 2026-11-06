@@ -11,6 +11,38 @@ Snapshot date: 2026-04-07
   connection. Auth session, profile, and group bootstrap requests have bounded
   timeouts and must fall back to the logged-out or empty-groups state.
 
+## Planned media storage migration
+
+- Keep Supabase for Auth, PostgreSQL, groups, permissions, and song metadata.
+- Plan a future migration of audio files, WAVs, covers, and other large media
+  from Supabase Storage to Cloudflare R2.
+- Cloudflare R2 is the preferred candidate because its free tier provides
+  substantially more object storage than Supabase Free and does not charge
+  egress in the usual download flow. Backblaze B2 is the secondary candidate.
+- The migration must use a private bucket and server-side signed upload/download
+  URLs. R2 credentials must never be exposed in React or browser-delivered
+  environment variables.
+- The future implementation should add a Vercel serverless API for signed URLs,
+  upload directly from the browser to R2, persist the R2 object key in
+  Supabase, and generate temporary playback URLs.
+- Revisit the current 50 MB audio validation only after the external storage
+  provider and its upload limits are configured.
+
+## Visual identity (Kreivo restyle, 2026-11-05)
+
+- The whole UI was re-themed after the Kreivo template (warm near-black, orange accent, Urbanist font,
+  glass surfaces, pill controls, animated aurora backdrop). Template lives outside the repo; only its
+  OFL font (`public/fonts/Urbanist-Variable.woff2`) and ideas were reused.
+- Colours are CSS variables as "r g b" triplets: `src/styles/palettes.css` (generated; four palettes:
+  orange default, green, violet, mono). `tailwind.config.js` maps `brand-*`, `gray-*`, `surface-*`,
+  `background`, `on-brand` to those variables, so `bg-brand-500/20` etc. follow the active palette.
+  Never hardcode blue/hex colours in components; use the tokens.
+- Palette switcher: `src/lib/palette.ts` (persists in localStorage, sets `<html data-palette>`),
+  picker UI in `PalettePicker` (Profile → Apariencia).
+- Shared pieces: `Brand.tsx` (BrandMark, BrandLockup, AmbientBackground), `ProfileHero.tsx`
+  (profile pages), `.chip`, `.hero-card`, `.stat-tile`, `.tab-strip`, `.reveal` utilities in globals.css.
+- Song detail: hero + Letra (karaoke, tools behind chips) + Comunidad stacked below, no tabs.
+
 ## Product
 
 The Appden is a private PWA for friend groups to:

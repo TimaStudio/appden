@@ -97,7 +97,7 @@ const QueueRow: React.FC<{
             dragListener={false}
             dragControls={controls}
             onDragEnd={onDragEnd}
-            className="flex items-center gap-2 rounded-2xl bg-[#17171a] py-1.5 pl-1 pr-1"
+            className="flex items-center gap-2 rounded-2xl bg-surface-600 py-1.5 pl-1 pr-1"
             whileDrag={{ scale: 1.02, boxShadow: '0 12px 30px rgba(0,0,0,0.45)', backgroundColor: '#222226' }}
         >
             <button

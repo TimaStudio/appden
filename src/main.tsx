@@ -1,7 +1,11 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
+import './styles/palettes.css'
 import './styles/globals.css'
+import { initPalette } from './lib/palette'
+
+initPalette()
 
 // The dev server never uses the PWA service worker. A worker left behind by `npm run preview`
 // on the same origin (port 4173) would keep serving the old cached build, so drop it.

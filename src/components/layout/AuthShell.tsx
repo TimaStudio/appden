@@ -1,4 +1,5 @@
 import React from 'react'
+import { AmbientBackground, BrandMark } from '@components/ui/Brand'
 
 interface AuthShellProps {
     title: string
@@ -10,19 +11,19 @@ interface AuthShellProps {
 /** Shared full-height layout for login, register and password recovery. */
 export const AuthShell: React.FC<AuthShellProps> = ({ title, subtitle, children, footer }) => (
     <div className="relative flex min-h-dvh flex-col overflow-hidden bg-background px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-[calc(env(safe-area-inset-top)+2.5rem)]">
-        <div className="pointer-events-none absolute -right-32 -top-40 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-40 -left-32 h-96 w-96 rounded-full bg-violet-500/15 blur-3xl" />
+        <AmbientBackground />
 
-        <div className="relative mx-auto flex w-full max-w-sm flex-1 flex-col justify-center">
-            <div className="mb-8">
-                <span className="font-display bg-gradient-to-r from-blue-200 to-blue-500 bg-clip-text text-3xl font-black italic tracking-[-0.05em] text-transparent">
-                    The Appden
-                </span>
-                <h1 className="mt-6 font-headline text-[1.75rem] font-extrabold leading-tight tracking-tight text-white">{title}</h1>
-                {subtitle ? <p className="mt-1.5 text-[15px] text-gray-400">{subtitle}</p> : null}
+        <div className="relative mx-auto flex w-full max-w-md flex-1 flex-col justify-center">
+            <div className="reveal mb-7 text-center">
+                <BrandMark className="mx-auto h-16 w-16 drop-shadow-[0_0_24px_rgb(var(--brand-500)/0.6)]" spin />
+                <p className="mt-4 font-headline text-sm font-extrabold uppercase tracking-[0.34em] text-white/85">The Appden</p>
+                <h1 className="text-balance mt-6 font-headline text-[2rem] font-extrabold leading-tight tracking-tight text-white">{title}</h1>
+                {subtitle ? <p className="mx-auto mt-2 max-w-xs text-[15px] text-gray-400">{subtitle}</p> : null}
             </div>
 
-            {children}
+            <div className="rounded-[1.75rem] border border-white/10 bg-surface-700/60 p-5 shadow-[0_30px_90px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl sm:p-6">
+                {children}
+            </div>
 
             {footer ? <div className="mt-8 text-center text-sm text-gray-400">{footer}</div> : null}
         </div>
