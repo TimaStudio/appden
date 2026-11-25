@@ -1,0 +1,12 @@
+# Firebase App Hosting (backend `appden`, deploys every push to main).
+# The app is a static Vite build; server.mjs serves dist/ with SPA fallback.
+scripts:
+  buildCommand: npm run build
+  runCommand: node server.mjs
+
+runConfig:
+  minInstances: 0
+  maxInstances: 2
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512

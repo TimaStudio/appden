@@ -6,7 +6,7 @@ Actualizado: 2026-11-25
 
 Migrado de Supabase a un stack gratuito (detalles en `docs/MIGRACION_FIREBASE.md`):
 Firebase Authentication (correo y Google) + Cloud Firestore + Cloudflare R2 (Worker
-`appden-storage`). El frontend se despliega en Vercel al hacer push a `main`.
+`appden-storage`). El frontend se despliega en Firebase App Hosting (https://appdenski.tmst.es) al hacer push a `main`.
 `npx tsc --noEmit`, `npm run lint` y `npm run build` pasan.
 
 ## Migración (2026-11-25)

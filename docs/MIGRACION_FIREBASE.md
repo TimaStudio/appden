@@ -5,7 +5,7 @@ Estado: aplicado el 2026-11-25. Supabase se ha retirado del código.
 ## Objetivo
 
 Que la app funcione sin coste: autenticación, base de datos y hosting en Firebase
-(plan Spark, sin tarjeta) y archivos nuevos en Cloudflare R2. La web sigue desplegándose en Vercel desde `main`. Una vez verificada,
+(plan Spark, sin tarjeta) y archivos nuevos en Cloudflare R2. La web se despliega con Firebase App Hosting desde `main`. Una vez verificada,
 se elimina todo lo relacionado con Supabase.
 
 No objetivos: migrar los archivos antiguos de Supabase Storage (se dan por
@@ -22,7 +22,7 @@ que dependían de ellos. Antiobjetivo: cualquier servicio que exija el plan Blaz
 | Permisos | Reglas de seguridad de Firestore (sustituyen a RLS) |
 | Lógica de servidor (RPC) | Lotes (`writeBatch`) y reglas; el Worker solo firma URLs de R2 |
 | Archivos | Cloudflare R2 + Worker `appden-storage` validando el token de Firebase |
-| Web | Vercel (despliegue automático desde `main`) |
+| Web | Firebase App Hosting (despliegue automático desde `main`, `server.mjs` sirve `dist/`) |
 
 ## Decisiones de modelo
 

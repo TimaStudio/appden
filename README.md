@@ -28,7 +28,7 @@ Everything is encrypted, private by default, and installable as a PWA on mobile 
 - **Auth**: Firebase Authentication (email/password and Google), project `appdenski`
 - **Database**: Cloud Firestore (`eur3`), protected by `firestore.rules`
 - **Files**: Cloudflare R2 behind the `appden-storage` Worker (`r2-worker/`), signed URLs
-- **Hosting**: Vercel (automatic deploys from `main`)
+- **Hosting**: Firebase App Hosting (backend `appden`, every push to `main` deploys to https://appdenski.tmst.es)
 - **PWA**: vite-plugin-pwa + Service Worker
 - **Icons**: lucide-react
 
@@ -178,7 +178,9 @@ Features:
 
 ## 🚀 Deployment
 
-- **Frontend**: every push to `main` deploys to Vercel (`https://the-appden.vercel.app`).
+- **Frontend**: every push to `main` builds and deploys on Firebase App Hosting (`apphosting.yaml`,
+  `server.mjs` serves `dist/`) at `https://appdenski.tmst.es` (also `https://appden--appdenski.europe-west4.hosted.app`).
+  Build status: Firebase console → App Hosting.
 - **Firestore rules/indexes**: `npm run firebase:rules`.
 - **R2 Worker**: `npm run storage:deploy` (secret `SIGNING_SECRET` set with `wrangler secret put`).
 - New domains must be added to Firebase → Authentication → Settings → Authorized domains and to

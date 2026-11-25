@@ -97,14 +97,12 @@ CI generation:
 - output file consumed by app: `public/changelog.generated.json`
 - verified locally at snapshot date with `npm run changelog:generate`
 
-## Deploy (Vercel only)
+## Deploy
 
-- import GitHub repo
-- set env vars
-- build command: `npm run build`
-- output: `dist`
-- `vercel.json` is present
-- `netlify.toml` removed intentionally
+- push to `main`: Firebase App Hosting (backend `appden`) builds with `npm run build` and runs
+  `node server.mjs` (see `apphosting.yaml`); site at https://appdenski.tmst.es
+- no env vars needed (production config is the code default)
+- rules/indexes: `npm run firebase:rules`; R2 Worker: `npm run storage:deploy`
 
 ## Smoke test checklist (post deploy)
 

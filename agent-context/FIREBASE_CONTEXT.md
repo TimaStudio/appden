@@ -4,11 +4,15 @@ Snapshot date: 2026-11-25. Replaces the old Supabase context (Supabase was remov
 
 ## Services
 
-- Firebase project `appdenski` (Spark plan, free): Authentication (email/password + Google) and
-  Cloud Firestore `(default)` in `eur3`. No Cloud Functions (they need the paid Blaze plan).
+- Firebase project `appdenski`: Authentication (email/password + Google) and Cloud Firestore
+  `(default)` in `eur3`. App Hosting requires the Blaze (pay-as-you-go) plan; usage is meant to stay
+  inside the free quotas, so avoid Cloud Functions and other paid services.
 - Cloudflare R2 bucket `appden-media` behind the Worker `appden-storage`
   (`https://appden-storage.albertomanana150307.workers.dev`, code in `r2-worker/`).
-- Frontend on Vercel, deployed on every push to `main`.
+- Frontend on Firebase App Hosting (backend `appden`, repo TimaStudio/appden): every push to `main`
+  runs `npm run build` and starts `node server.mjs` (static server for `dist/`, see `apphosting.yaml`).
+  URLs: https://appdenski.tmst.es and https://appden--appdenski.europe-west4.hosted.app.
+  App Hosting needs the container to listen on `$PORT`: never remove `server.mjs`.
 
 ## Data model
 

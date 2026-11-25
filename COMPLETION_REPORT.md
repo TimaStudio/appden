@@ -110,7 +110,7 @@ The application is now feature-complete for MVP Phase 5:
 2. Run SQL migrations to setup database
 3. Create storage buckets
 4. Install dependencies and run locally
-5. Deploy to Vercel or self-hosted infrastructure
+5. Deploy: push to `main` (Firebase App Hosting)
 
 ## 📋 Todos Completed Today
 - [x] RLS security policies (critical)
