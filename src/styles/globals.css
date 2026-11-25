@@ -913,3 +913,127 @@
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------
+   Motion details: the room picks up the colour of what is playing,
+   play/pause morph, favourite pop, command palette rows.
+   Everything here animates opacity / transform (plus one registered
+   colour property), so it stays on the compositor.
+   ------------------------------------------------------------ */
+@property --ambient-tint {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+
+@layer components {
+  .ambient-bg {
+    transition: --ambient-tint 1.6s ease;
+  }
+
+  /* Two soft washes in the cover's dominant colour. No filter: the gradients are already soft. */
+  .ambient-tint {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    background:
+      radial-gradient(78% 60% at 82% 4%, color-mix(in srgb, var(--ambient-tint) 40%, transparent), transparent 70%),
+      radial-gradient(66% 54% at 8% 100%, color-mix(in srgb, var(--ambient-tint) 26%, transparent), transparent 72%);
+    transition: opacity 1.2s ease;
+  }
+
+  .ambient-bg[data-tint='on'] .ambient-tint {
+    opacity: 1;
+  }
+
+  .ambient-bg[data-tint='dim'] .ambient-tint {
+    opacity: 0.4;
+  }
+
+  /* The black and white palette stays colourless. */
+  html[data-palette='mono'] .ambient-tint {
+    display: none;
+  }
+
+  /* Nothing behind the full player is visible: stop moving it. */
+  html[data-fullplayer='on'] .ambient-bg::before,
+  html[data-fullplayer='on'] .ambient-bg::after {
+    animation-play-state: paused;
+  }
+
+  /* Play <-> pause: both glyphs stacked, the outgoing one shrinks and blurs away. */
+  .pp-icon {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .pp-icon > svg {
+    grid-area: 1 / 1;
+    width: 100%;
+    height: 100%;
+    transition: opacity 0.16s ease, transform 0.22s var(--ease-out), filter 0.16s ease;
+  }
+
+  .pp-icon > .pp-play {
+    translate: 6% 0;
+  }
+
+  .pp-icon[data-playing='true'] > .pp-play,
+  .pp-icon[data-playing='false'] > .pp-pause {
+    opacity: 0;
+    transform: scale(0.4);
+    filter: blur(3px);
+  }
+
+  /* Favourite: the heart pops and a ring expands once, only when it is switched on. */
+  .heart {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .heart-burst > svg {
+    animation: heartPop 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .heart-burst::after {
+    content: '';
+    position: absolute;
+    inset: -30%;
+    border-radius: 999px;
+    border: 2px solid currentColor;
+    pointer-events: none;
+    animation: heartRing 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Keyboard key caps (shortcuts sheet, search hints). */
+  .kbd {
+    @apply inline-grid h-6 min-w-[1.5rem] place-items-center rounded-md px-1.5 text-[11px] font-bold leading-none text-gray-300;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+    font-family: inherit;
+  }
+
+  /* Command palette rows. The highlight is instant: it follows the keyboard. */
+  .cmd-row {
+    @apply flex min-h-[3.25rem] w-full cursor-pointer select-none items-center gap-3 rounded-2xl px-2.5 text-left;
+  }
+
+  .cmd-row[aria-selected='true'] {
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 0 0 1px rgb(var(--brand-500) / 0.22);
+  }
+}
+
+@keyframes heartPop {
+  0% { transform: scale(1); }
+  30% { transform: scale(0.78); }
+  65% { transform: scale(1.22); }
+  100% { transform: scale(1); }
+}
+
+@keyframes heartRing {
+  from { opacity: 0.55; transform: scale(0.45); }
+  to { opacity: 0; transform: scale(1.25); }
+}

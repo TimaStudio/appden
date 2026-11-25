@@ -131,7 +131,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return (
         <ToastContext.Provider value={value}>
             {children}
-            <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--dock-h)+var(--mini-h)+0.75rem)] z-[120] flex justify-center px-3 safe-left safe-right md:inset-x-auto md:bottom-6 md:right-6 md:justify-end md:px-0">
+            <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--dock-h)+var(--mini-h)+0.75rem)] z-[120] flex justify-center px-3 safe-left safe-right md:inset-x-auto md:bottom-[calc(var(--dock-h)+var(--mini-h)+1.5rem)] md:right-6 md:justify-end md:px-0">
                 <div className="flex w-full max-w-sm flex-col gap-2">
                     <AnimatePresence initial={false}>
                         {toasts.map((item) => (

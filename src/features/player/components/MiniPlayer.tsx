@@ -2,12 +2,9 @@ import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion, type PanInfo } from 'framer-motion'
 import {
-    Heart,
     ListMusic,
     Maximize2,
     Mic2,
-    Pause,
-    Play,
     Repeat,
     Repeat1,
     Shuffle,
@@ -19,6 +16,9 @@ import {
     X,
 } from 'lucide-react'
 import { Cover } from '@components/music/Cover'
+import { FavoriteHeart } from '@components/ui/FavoriteHeart'
+import { PlayPauseIcon } from '@components/ui/PlayPauseIcon'
+import { SleepTimerButton } from '@features/player/components/SleepTimer'
 import { nextRepeatMode, repeatLabel } from '@features/player/components/PlayerControls'
 import { ProgressBar } from '@features/player/components/ProgressBar'
 import { QueuePanel } from '@features/player/components/QueuePanel'
@@ -100,7 +100,7 @@ const PhoneMiniPlayer: React.FC = () => {
                         className="icon-btn text-white"
                         aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                     >
-                        {isPlaying ? <Pause className="h-6 w-6 fill-current" /> : <Play className="ml-0.5 h-6 w-6 fill-current" />}
+                        <PlayPauseIcon playing={isPlaying} className="h-6 w-6" />
                     </button>
 
                     <button onClick={() => void next()} className="icon-btn text-white" aria-label="Siguiente">
@@ -109,7 +109,11 @@ const PhoneMiniPlayer: React.FC = () => {
                 </div>
 
                 <div className="absolute inset-x-3 bottom-0 h-[2px] overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-gradient-to-r from-brand-400 to-brand-300 transition-[width] duration-300 ease-linear" style={{ width: `${progress}%` }} />
+                    {/* Scaled, not resized: the bar never triggers layout while a song plays. */}
+                    <div
+                        className="h-full w-full origin-left bg-gradient-to-r from-brand-400 to-brand-300 transition-transform duration-300 ease-linear"
+                        style={{ transform: `scaleX(${progress / 100})` }}
+                    />
                 </div>
             </div>
         </motion.div>
@@ -214,7 +218,7 @@ const PlayerBar: React.FC = () => {
                             aria-label={favorite.isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
                             aria-pressed={favorite.isFavorite}
                         >
-                            <Heart className={cn('h-[18px] w-[18px]', favorite.isFavorite && 'fill-current')} />
+                            <FavoriteHeart active={favorite.isFavorite} itemKey={currentSong.id} className="h-[18px] w-[18px]" />
                         </button>
                     </div>
 
@@ -240,7 +244,7 @@ const PlayerBar: React.FC = () => {
                                 className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand shadow-glow-brand transition-transform duration-150 hover:scale-105 active:scale-95"
                                 aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                             >
-                                {isPlaying ? <Pause className="h-[18px] w-[18px] fill-current" /> : <Play className="ml-0.5 h-[18px] w-[18px] fill-current" />}
+                                <PlayPauseIcon playing={isPlaying} className="h-[18px] w-[18px]" />
                             </button>
                             <button type="button" onClick={() => void next()} className="icon-btn h-10 w-10 text-white/85 hover:text-white" aria-label="Siguiente">
                                 <SkipForward className="h-5 w-5 fill-current" />
@@ -276,6 +280,7 @@ const PlayerBar: React.FC = () => {
                         >
                             <Mic2 className="h-[18px] w-[18px]" />
                         </button>
+                        <SleepTimerButton compact className="hidden h-9 w-9 lg:inline-grid" />
                         <button
                             type="button"
                             onClick={() => toggleQueuePanel(!isQueueOpen)}

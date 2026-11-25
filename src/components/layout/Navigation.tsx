@@ -2,6 +2,8 @@ import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { NAV_SECTIONS, resolveActiveNav } from '@components/layout/navItems'
+import { EqualizerBars } from '@components/music/Cover'
+import { useAdvancedPlayerStore } from '@features/player/player.store'
 import { cn } from '@lib/utils'
 
 /**
@@ -11,6 +13,7 @@ import { cn } from '@lib/utils'
 export const BottomNav: React.FC = () => {
     const location = useLocation()
     const activeKey = resolveActiveNav(location.pathname).section?.key
+    const isPlaying = useAdvancedPlayerStore((state) => state.isPlaying)
 
     return (
         <nav
@@ -41,6 +44,9 @@ export const BottomNav: React.FC = () => {
                                     />
                                 ) : null}
                                 <Icon className="relative h-[22px] w-[22px]" strokeWidth={active ? 2.3 : 1.9} />
+                                {key === 'music' && isPlaying ? (
+                                    <EqualizerBars playing className="absolute right-1.5 top-0.5 h-2.5 gap-[2px] text-brand-300 [&>span]:w-[2px]" />
+                                ) : null}
                             </span>
                             <span className={cn('text-[11px] leading-none', active ? 'font-semibold' : 'font-medium')}>{label}</span>
                         </Link>

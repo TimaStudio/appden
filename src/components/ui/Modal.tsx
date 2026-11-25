@@ -26,7 +26,7 @@ const sizeClass = {
 
 let openCount = 0
 
-function lockScroll() {
+export function lockScroll() {
     openCount += 1
     if (openCount === 1) {
         document.documentElement.dataset.scrollLocked = 'true'
@@ -36,7 +36,7 @@ function lockScroll() {
     }
 }
 
-function unlockScroll() {
+export function unlockScroll() {
     openCount = Math.max(0, openCount - 1)
     if (openCount === 0) {
         delete document.documentElement.dataset.scrollLocked

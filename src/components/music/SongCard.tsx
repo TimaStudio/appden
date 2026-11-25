@@ -4,6 +4,7 @@ import { usePlayerStore } from '@app/store/player.store'
 import type { ActionSheetItem } from '@components/ui/ActionSheet'
 import { Cover, EqualizerBars } from '@components/music/Cover'
 import { SongActionsSheet } from '@components/music/SongActionsSheet'
+import { FavoriteHeart } from '@components/ui/FavoriteHeart'
 import { useFavoriteToggle } from '@hooks/useFavoriteToggle'
 import { useLongPress } from '@hooks/useLongPress'
 import { cn, formatDuration } from '@lib/utils'
@@ -110,7 +111,7 @@ export const SongCard: React.FC<SongCardProps> = ({ song, onPlay, showArtist = t
                     aria-label={favorite.isFavorite ? 'Quitar de favoritas' : 'Añadir a favoritas'}
                     aria-pressed={favorite.isFavorite}
                 >
-                    <Heart className={cn('h-[18px] w-[18px]', favorite.isFavorite && 'fill-current')} />
+                    <FavoriteHeart active={favorite.isFavorite} itemKey={song.id} className="h-[18px] w-[18px]" />
                 </button>
                 <button type="button" onClick={openActions} className="icon-btn text-gray-400" aria-label={`Más opciones de ${song.title}`}>
                     <MoreHorizontal className="h-5 w-5" />

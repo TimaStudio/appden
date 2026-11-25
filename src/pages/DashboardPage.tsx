@@ -1,7 +1,7 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, ChevronRight, MessageCircle, Music, Play, Plus, Upload, UserPlus, Users, Wallet } from 'lucide-react'
+import { ArrowRight, ChevronRight, MessageCircle, Music, Play, Plus, Shuffle, Upload, UserPlus, Users, Wallet } from 'lucide-react'
 import { useAuth } from '@hooks/useAuth'
 import { useActiveGroup } from '@hooks/useActiveGroup'
 import { usePlayerStore } from '@app/store/player.store'
@@ -9,6 +9,7 @@ import { useAdvancedPlayerStore } from '@features/player/player.store'
 import { Avatar } from '@components/common/Avatar'
 import { Cover } from '@components/music/Cover'
 import { SectionHeader } from '@components/ui/PageHeader'
+import { AnimatedNumber } from '@components/ui/AnimatedNumber'
 import { Skeleton } from '@components/ui/LoadingSkeleton'
 import { ROUTES } from '@lib/constants'
 import { cn, formatMoney, formatRelative } from '@lib/utils'
@@ -41,6 +42,16 @@ const DashboardPage: React.FC = () => {
         enabled: !!groupId && !!userId,
     })
     const recentSongs = (songs ?? []).slice(0, 10)
+
+    // One tap to hear the whole group library in a fresh random order.
+    const playShuffled = () => {
+        const pool = [...(songs ?? [])]
+        for (let i = pool.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1))
+            ;[pool[i], pool[j]] = [pool[j], pool[i]]
+        }
+        setQueue(pool, 0)
+    }
 
     const { data: debts } = useQuery({
         queryKey: ['debts', groupId],
@@ -78,9 +89,9 @@ const DashboardPage: React.FC = () => {
     return (
         <div className="page-shell animate-fade-in">
             <section className="reveal pt-1">
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-300">{greeting()}</p>
-                <h1 className="page-title mt-1 !text-4xl md:!text-5xl">
-                    Hola{firstName ? ', ' : ''}
+                <h1 className="page-title text-balance !text-4xl md:!text-5xl">
+                    {greeting()}
+                    {firstName ? ', ' : ''}
                     {firstName ? <span className="text-gradient">{firstName}</span> : null}
                 </h1>
             </section>
@@ -106,9 +117,12 @@ const DashboardPage: React.FC = () => {
                     <button type="button" onClick={() => openFullPlayer(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                         <Cover src={currentSong.cover_url} alt="" seed={currentSong.id} className="h-14 w-14 rounded-xl" />
                         <span className="min-w-0">
-                            <span className="block text-[11px] font-bold uppercase tracking-[0.16em] text-brand-300">Continuar escuchando</span>
                             <span className="block truncate font-semibold text-white">{currentSong.title}</span>
-                            <span className="block truncate text-sm text-gray-400">{currentSong.artist_name}</span>
+                            <span className="block truncate text-sm text-gray-400">
+                                <span className="font-semibold text-brand-300">En pausa</span>
+                                <span className="mx-1.5 text-gray-600">·</span>
+                                {currentSong.artist_name}
+                            </span>
                         </span>
                     </button>
                     <button
@@ -155,8 +169,7 @@ const DashboardPage: React.FC = () => {
                                     net > 0.004 ? 'text-emerald-300' : net < -0.004 ? 'text-red-300' : 'text-white'
                                 )}
                             >
-                                {net > 0.004 ? '+' : ''}
-                                {formatMoney(net)}
+                                <AnimatedNumber value={net} format={(value) => `${value > 0.004 ? '+' : ''}${formatMoney(value)}`} />
                             </p>
                             <p className="mt-1 text-sm text-gray-400">
                                 {myBalance.owed === 0 && myBalance.lent === 0 ? (
@@ -181,9 +194,17 @@ const DashboardPage: React.FC = () => {
                     <SectionHeader
                         title="Recién subidas"
                         action={
-                            <Link to={ROUTES.MUSIC} className="inline-flex min-h-[2.5rem] items-center gap-1 text-sm font-semibold text-brand-300">
-                                Ver todo <ArrowRight className="h-4 w-4" />
-                            </Link>
+                            <span className="flex items-center gap-3">
+                                {(songs?.length ?? 0) > 1 ? (
+                                    <button type="button" onClick={playShuffled} className="chip" aria-label="Reproducir todo el grupo en orden aleatorio">
+                                        <Shuffle className="h-3.5 w-3.5" />
+                                        Aleatorio
+                                    </button>
+                                ) : null}
+                                <Link to={ROUTES.MUSIC} className="inline-flex min-h-[2.5rem] items-center gap-1 text-sm font-semibold text-brand-300">
+                                    Ver todo <ArrowRight className="h-4 w-4" />
+                                </Link>
+                            </span>
                         }
                     />
                     {songsLoading ? (

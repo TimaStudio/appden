@@ -26,7 +26,22 @@ export const BrandLockup: React.FC<{ className?: string; markClassName?: string 
     </span>
 )
 
+interface AmbientBackgroundProps {
+    className?: string
+    /** Colour of what is playing; the backdrop washes towards it. */
+    tint?: string | null
+    /** `on` while playing, `dim` while paused. */
+    tintLevel?: 'on' | 'dim'
+}
+
 /** Animated aurora behind the app shell. Pure CSS; respects reduced motion. */
-export const AmbientBackground: React.FC<{ className?: string }> = ({ className }) => (
-    <div aria-hidden="true" className={cn('ambient-bg grain', className)} />
+export const AmbientBackground: React.FC<AmbientBackgroundProps> = ({ className, tint, tintLevel = 'on' }) => (
+    <div
+        aria-hidden="true"
+        className={cn('ambient-bg grain', className)}
+        data-tint={tint ? tintLevel : undefined}
+        style={tint ? ({ '--ambient-tint': tint } as React.CSSProperties) : undefined}
+    >
+        <i className="ambient-tint" />
+    </div>
 )

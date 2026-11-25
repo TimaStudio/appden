@@ -1,5 +1,6 @@
 import React from 'react'
-import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { PlayPauseIcon } from '@components/ui/PlayPauseIcon'
 import type { RepeatMode } from '@features/player/player.types'
 import { cn } from '@lib/utils'
 
@@ -55,7 +56,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                     className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-gradient-to-br from-brand-300 to-brand-500 text-on-brand shadow-[0_16px_44px_rgb(var(--brand-500)/0.45)] transition-transform active:scale-95"
                     aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
                 >
-                    {isPlaying ? <Pause className="h-8 w-8 fill-current" /> : <Play className="ml-1 h-8 w-8 fill-current" />}
+                    <PlayPauseIcon playing={isPlaying} className="h-8 w-8" />
                 </button>
 
                 <button onClick={onNext} className="icon-btn h-14 w-14 text-white" aria-label="Siguiente">

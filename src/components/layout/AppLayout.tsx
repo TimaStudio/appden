@@ -17,6 +17,8 @@ import { usePlayer } from '@features/player/hooks/usePlayer'
 import { useAdvancedPlayerStore } from '@features/player/player.store'
 import { MiniPlayer } from '@features/player/components/MiniPlayer'
 import { FullPlayer } from '@features/player/components/FullPlayer'
+import { useDominantColor } from '@features/player/hooks/useDominantColor'
+import { CommandHost, SearchTrigger } from '@features/command/CommandHost'
 import { ROUTES } from '@lib/constants'
 import { cn } from '@lib/utils'
 
@@ -61,7 +63,7 @@ export const AppLayout: React.FC = () => {
     return (
         <MotionConfig reducedMotion="user">
             <div className="relative h-dvh overflow-hidden bg-background text-on-background">
-                <AmbientBackground />
+                <ShellAmbient />
 
                 <Sidebar />
 
@@ -107,6 +109,7 @@ export const AppLayout: React.FC = () => {
                         </div>
 
                         <div className="flex shrink-0 items-center gap-1 md:gap-2">
+                            <SearchTrigger />
                             <Link
                                 to={ROUTES.NOTIFICATIONS}
                                 className={cn(
@@ -166,9 +169,28 @@ export const AppLayout: React.FC = () => {
                 <MiniPlayer />
                 <BottomNav />
                 <FullPlayer />
+                <CommandHost />
             </div>
         </MotionConfig>
     )
+}
+
+/** The shell backdrop takes the colour of the cover that is playing, and dims when paused. */
+const ShellAmbient: React.FC = () => {
+    const coverUrl = useAdvancedPlayerStore((state) => state.currentSong?.cover_url)
+    const isPlaying = useAdvancedPlayerStore((state) => state.isPlaying)
+    const isFullPlayer = useAdvancedPlayerStore((state) => state.isFullPlayer)
+    const tint = useDominantColor(coverUrl)
+
+    // Lets CSS pause the backdrop animation while the full player covers it.
+    useEffect(() => {
+        document.documentElement.dataset.fullplayer = isFullPlayer ? 'on' : 'off'
+        return () => {
+            delete document.documentElement.dataset.fullplayer
+        }
+    }, [isFullPlayer])
+
+    return <AmbientBackground tint={tint} tintLevel={isPlaying ? 'on' : 'dim'} />
 }
 
 /**

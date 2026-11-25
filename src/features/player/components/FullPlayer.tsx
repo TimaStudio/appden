@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion, useDragControls, type PanInfo } from 'framer-motion'
-import { ChevronDown, FileText, Heart, ListMusic } from 'lucide-react'
+import { ChevronDown, FileText, ListMusic } from 'lucide-react'
 import { Cover } from '@components/music/Cover'
+import { FavoriteHeart } from '@components/ui/FavoriteHeart'
 import { Modal } from '@components/ui/Modal'
+import { SleepTimerButton } from '@features/player/components/SleepTimer'
 import { nextRepeatMode, PlayerControls } from '@features/player/components/PlayerControls'
 import { ProgressBar } from '@features/player/components/ProgressBar'
 import { QueuePanel } from '@features/player/components/QueuePanel'
@@ -207,7 +209,7 @@ export const FullPlayer: React.FC = () => {
                                         aria-label={favorite.isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
                                         aria-pressed={favorite.isFavorite}
                                     >
-                                        <Heart className={cn('h-6 w-6', favorite.isFavorite && 'fill-current')} />
+                                        <FavoriteHeart active={favorite.isFavorite} itemKey={currentSong.id} className="h-6 w-6" />
                                     </button>
                                 </div>
 
@@ -240,6 +242,7 @@ export const FullPlayer: React.FC = () => {
                                         <FileText className="h-4 w-4" />
                                         Letra y comentarios
                                     </button>
+                                    <SleepTimerButton />
                                     <button onClick={() => toggleQueuePanel(true)} className="btn-ghost -mr-3 text-white/75">
                                         {queue.length > queueIndex + 1 ? `${queue.length - queueIndex - 1} en cola` : 'Cola'}
                                     </button>
