@@ -1,29 +1,28 @@
 # The Appden — Estado del proyecto
 
-Actualizado: 2026-10-29
+Actualizado: 2026-11-25
 
 ## Estado
 
-Versión estable en local: `npx tsc --noEmit`, `npm run lint` y `npm run build` pasan.
-Todo está publicado en `develop`.
+Migrado de Supabase a un stack gratuito (detalles en `docs/MIGRACION_FIREBASE.md`):
+Firebase Authentication (correo y Google) + Cloud Firestore + Cloudflare R2 (Worker
+`appden-storage`). El frontend se despliega en Vercel al hacer push a `main`.
+`npx tsc --noEmit`, `npm run lint` y `npm run build` pasan.
 
-## Qué hay que hacer en Supabase (en este orden)
+## Migración (2026-11-25)
 
-1. `supabase/migrations/015_auth_approval_invites_posts_notifications.sql` — arregla el
-   registro ("Database error saving new user"), la aprobación de cuentas, los likes
-   de posts, los enlaces de invitación, salir de un grupo y crea notificaciones reales.
-2. `supabase/migrations/016_albums.sql` — álbumes como entidad (`albums`, `songs.album_id`).
-   Sin ella la app agrupa por `album_name`.
-3. `supabase/migrations/017_debts_group_members.sql` — deudas entre cualquier par de
-   miembros (necesaria para la calculadora de reparto), pagos registrados por
-   cualquiera de las dos partes y fecha límite.
-4. `supabase/migrations/018_song_artist_permissions.sql` — los artistas acreditados
-   y copropietarios pueden editar la canción (borrar sigue siendo de quien la subió).
-5. Ajustes de Auth y cómo hacerse administrador: `docs/SUPABASE_AUTH_SETUP.md`.
+- Importados del backup del 17-11-2026: 12 usuarios (con sus contraseñas), perfiles,
+  grupos, miembros, invitaciones, amistades, publicaciones, deudas, pagos, insignias,
+  objetivos, reportes y notificaciones de deudas/amistad.
+- Descartados (los archivos de Supabase Storage se perdieron): canciones, letras,
+  álbumes, playlists, favoritos, comentarios, avatares, portadas y archivos. La música
+  sigue funcionando para subidas nuevas a R2.
+- Las notificaciones y la actividad que antes creaban triggers SQL ahora las crea la app.
+- Admin de la app: documento `admins/{uid}` en Firestore (se gestiona desde la consola).
 
 ## Hecho en esta revisión
 
-- Auth: sin bloqueo del lock de Supabase (doble login), recuperación de contraseña
+- Auth: sin doble login, recuperación de contraseña
   completa, aviso de cuenta pendiente, invitaciones que sobreviven al login, limpieza
   del reproductor al cerrar sesión.
 - Grupos: "mis grupos" solo incluye grupos donde eres miembro, selector de grupo en la
@@ -56,5 +55,4 @@ Todo está publicado en `develop`.
 - Selector de álbum existente en el formulario de subida (la API ya está en
   `src/features/music/services/albums.service.ts`).
 - Pasada de tildes en textos antiguos ("cancion", "musica"…).
-- Verificación con una cuenta real tras aplicar 015–018.
-- Dejar de versionar `.env.local` (ver `docs/SUPABASE_AUTH_SETUP.md`).
+- Borrar el proyecto antiguo de Supabase cuando ya no se necesite el backup.

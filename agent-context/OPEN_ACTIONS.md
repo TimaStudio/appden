@@ -1,35 +1,15 @@
-﻿# Open Actions (Next Improvements)
+# Open Actions (Next Improvements)
 
-## High priority before broader launch
+## High priority (after the Firebase migration, 2026-11-25)
 
-1. Apply Supabase migrations `001-014` in the target QA/staging project.
-2. Add `SUPABASE_SERVICE_ROLE_KEY` to the QA environment and run `npm run seed:qa:fresh`.
-3. Execute the blocker subset from `docs/QA_TEST_CHECKLIST.md`.
-4. Validate the new `/notifications` Supabase read/update/delete flow with seeded backend rows.
-5. Verify stable avatar-path persistence and signed-on-read rendering with an authenticated QA account.
-6. Run full normal-browser session test (non-incognito) on at least 2 devices.
-7. Validate upload end-to-end in production: audio upload, DB insert, feed appearance, signed playback URL.
-8. Confirm bottom dock is centered on real mobile devices with and without the mini player visible.
-9. Assign first real admin user in `user_roles` and validate unread report notifications.
-10. Enable and verify GitHub workflow `changelog-develop.yml` can push generated changelog updates.
-11. Run a focused authenticated music smoke test after the catalog/playlists reliability pass: upload without cover, upload with cover, play from list, play from detail, queue next/previous, reload and replay.
-12. Verify the new artist-credit flow with:
-   - single existing user artist
-   - multiple existing user artists
-   - mixed existing user + manual external artist
-13. Keep one confirmed QA account available so browser smoke does not depend on live signup email confirmation/rate limits.
-14. Re-verify desktop mouse-wheel scrolling on a fully authenticated long page after the new `AppLayout` scroll-container change.
-15. External media storage (Cloudflare R2): CODE DONE (r2-worker/, src/lib/storage/r2.ts, adapter in client.ts),
-   DEPLOY PENDING as of 2026-11-05 — run `npm run storage:setup` (needs Cloudflare login), set
-   `VITE_STORAGE_URL` in Vercel, then `npm run storage:migrate` once Supabase egress resets. See docs/R2_SETUP.md.
-   Original scope:
-   - evaluate Cloudflare R2 first and Backblaze B2 as fallback
-   - keep Supabase for Auth, PostgreSQL, groups, RLS, and metadata
-   - add private-bucket signed upload/playback endpoints through Vercel
-   - keep provider credentials server-side
-   - support stable object keys and on-demand playback URLs
-   - migrate or preserve compatibility with existing Supabase Storage paths
-   - raise the current 50 MB audio limit only after end-to-end validation
+1. Smoke test in production with real accounts: login (email and Google), approve a new account,
+   groups, invite link, debts (create, pay, settle), notifications, posts.
+2. Upload end-to-end on R2: avatar, song with cover, file, debt receipt; play from list and detail.
+3. Watch the Firestore usage page during the first days (free tier: 50k reads / 20k writes per day).
+4. Decide whether to move the Worker to the new EU bucket `appdenski` (see `docs/MIGRACION_FIREBASE.md`).
+5. Delete the old Supabase project once the backup is no longer needed.
+6. Confirm bottom dock is centered on real mobile devices with and without the mini player visible.
+7. Enable and verify GitHub workflow `changelog-develop.yml` can push generated changelog updates.
 
 ## Medium priority
 

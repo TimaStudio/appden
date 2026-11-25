@@ -1,5 +1,8 @@
 # QA Prelaunch Audit
 
+> Historical note: written while the app ran on Supabase. Since 2026-11-25 the app uses
+> Firebase (Auth + Firestore) and Cloudflare R2; see `agent-context/FIREBASE_CONTEXT.md`.
+
 Date: 2026-03-26
 Project: The Appden
 Scope: React, TypeScript, Supabase, PostgreSQL, PWA, RLS, Storage, prelaunch QA readiness

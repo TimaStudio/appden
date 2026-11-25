@@ -1,11 +1,11 @@
-﻿import { supabase } from '@lib/supabase/client'
-import { reportLocalFallback } from '@lib/diagnostics/fallback'
+import { addDoc, collection, doc, getDoc, setDoc, updateDoc, where } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { fetchProfilesMap, getById, nowIso, queryDocs, songGroupId } from '@lib/firebase/db'
 import { asrService } from '@services/asr.service'
 import { groupActivityService } from '@services/group-activity.service'
 import type {
     LyricsProposalStatus,
     LyricsSource,
-    Profile,
     Song,
     SongLyricLine,
     SongLyrics,
@@ -14,13 +14,6 @@ import type {
     SongLyricsVersion,
     TranslationLanguage,
 } from '@/types'
-
-const STORAGE_KEYS = {
-    lyrics: 'appden:lyrics:fallback:v2',
-    versions: 'appden:lyrics:versions:fallback:v1',
-    proposals: 'appden:lyrics:proposals:fallback:v1',
-    translations: 'appden:lyrics:translations:fallback:v1',
-} as const
 
 type SaveLyricsInput = {
     songId: string
@@ -40,52 +33,36 @@ type AutoTranscribeInput = {
     userId: string
 }
 
-type LyricsFallbackStore = Record<string, { lyrics: SongLyrics; lines: SongLyricLine[] }>
-type VersionsFallbackStore = Record<string, SongLyricsVersion[]>
-type TranslationsFallbackStore = Record<string, SongLyricsTranslation[]>
+/**
+ * `song_lyrics/{songId}` holds the text and its parsed lines; versions, proposals and
+ * translations are separate collections. Every document carries `group_id` for the rules.
+ */
+async function requireGroup(songId: string): Promise<string> {
+    const groupId = await songGroupId(songId)
+    if (!groupId) throw new Error('No encontramos esta canción.')
+    return groupId
+}
 
-type ProposalsFallbackStore = SongLyricsProposal[]
+const songScope = (groupId: string, songId: string) => [where('group_id', '==', groupId), where('song_id', '==', songId)]
 
 export const lyricsService = {
     async getLyrics(songId: string): Promise<SongLyrics | null> {
-        const { data: lyricsRow, error: lyricsError } = await supabase
-            .from('song_lyrics')
-            .select('*')
-            .eq('song_id', songId)
-            .maybeSingle()
-
-        if (lyricsError) {
-            if (isMissingRelationError(lyricsError)) {
-                reportLocalFallback('lyrics', lyricsError)
-                return readFallbackLyrics(songId)
-            }
-            throw lyricsError
-        }
-
-        if (!lyricsRow) return null
-
-        const { data: linesRows, error: linesError } = await supabase
-            .from('song_lyric_lines')
-            .select('*')
-            .eq('song_id', songId)
-            .order('line_index', { ascending: true })
-
-        if (linesError && !isMissingRelationError(linesError)) {
-            throw linesError
-        }
-
-        return {
-            ...(lyricsRow as SongLyrics),
-            lines: (linesRows ?? []) as SongLyricLine[],
-        }
+        const lyrics = await getById<SongLyrics>('song_lyrics', songId)
+        if (!lyrics) return null
+        return { ...lyrics, lines: [...(lyrics.lines ?? [])].sort((a, b) => a.line_index - b.line_index) }
     },
 
     async saveLyrics(input: SaveLyricsInput): Promise<SongLyrics> {
+        const groupId = await requireGroup(input.songId)
         const parsedLines = input.lines ?? parseTimedLyrics(input.songId, input.rawText)
         await snapshotVersion(input)
 
-        const payload = {
+        const ref = doc(db, 'song_lyrics', input.songId)
+        const existing = (await getDoc(ref)).data() as SongLyrics | undefined
+        const now = nowIso()
+        const data = {
             song_id: input.songId,
+            group_id: groupId,
             raw_text: input.rawText.trim(),
             language: input.language ?? 'es',
             source: input.source ?? 'manual',
@@ -95,63 +72,22 @@ export const lyricsService = {
             is_verified: false,
             verified_by: null,
             verified_at: null,
-        }
-
-        const { data: lyricsRow, error: lyricsError } = await supabase
-            .from('song_lyrics')
-            .upsert(payload, { onConflict: 'song_id' })
-            .select('*')
-            .single()
-
-        if (lyricsError) {
-            if (isMissingRelationError(lyricsError)) {
-                const saved = writeFallbackLyrics(input, parsedLines)
-                if (!input.suppressActivity) {
-                    await logLyricsActivity(saved.song_id, input.userId, 'lyrics_updated')
-                }
-                return saved
-            }
-            throw lyricsError
-        }
-
-        const { error: deleteLinesError } = await supabase
-            .from('song_lyric_lines')
-            .delete()
-            .eq('song_id', input.songId)
-
-        if (deleteLinesError && !isMissingRelationError(deleteLinesError)) {
-            throw deleteLinesError
-        }
-
-        if (parsedLines.length > 0) {
-            const linesPayload = parsedLines.map((line, idx) => ({
+            lines: parsedLines.map((line, index) => ({
                 song_id: input.songId,
-                line_index: idx,
+                line_index: index,
                 content: line.content,
                 start_seconds: line.start_seconds,
                 end_seconds: line.end_seconds,
-            }))
-
-            const { error: insertLinesError } = await supabase
-                .from('song_lyric_lines')
-                .insert(linesPayload)
-
-            if (insertLinesError && !isMissingRelationError(insertLinesError)) {
-                throw insertLinesError
-            }
+            })),
+            created_at: existing?.created_at ?? now,
+            updated_at: now,
         }
+        await setDoc(ref, data)
 
-        const saved: SongLyrics = {
-            ...(lyricsRow as SongLyrics),
-            lines: parsedLines,
-        }
-
+        const { group_id: _groupId, ...rest } = data
+        const saved: SongLyrics = { id: input.songId, ...rest }
         await appendVersion(saved, input.userId)
-
-        if (!input.suppressActivity) {
-            await logLyricsActivity(saved.song_id, input.userId, 'lyrics_updated')
-        }
-
+        if (!input.suppressActivity) await logLyricsActivity(saved.song_id, input.userId, 'lyrics_updated')
         return saved
     },
 
@@ -176,50 +112,14 @@ export const lyricsService = {
     },
 
     async listVersions(songId: string): Promise<SongLyricsVersion[]> {
-        const { data, error } = await supabase
-            .from('song_lyrics_versions')
-            .select('*')
-            .eq('song_id', songId)
-            .order('version_number', { ascending: false })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                return readFallbackVersions(songId)
-            }
-            throw error
-        }
-
-        return (data ?? []) as SongLyricsVersion[]
+        const groupId = await requireGroup(songId)
+        const versions = await queryDocs<SongLyricsVersion>('song_lyrics_versions', ...songScope(groupId, songId))
+        return versions.sort((a, b) => b.version_number - a.version_number)
     },
 
     async rollbackToVersion(songId: string, versionId: string, userId: string): Promise<SongLyrics> {
-        const { data, error } = await supabase
-            .from('song_lyrics_versions')
-            .select('*')
-            .eq('song_id', songId)
-            .eq('id', versionId)
-            .maybeSingle()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const fallback = readFallbackVersions(songId).find((item) => item.id === versionId)
-                if (!fallback) throw new Error('Versión no encontrada.')
-                return this.saveLyrics({
-                    songId,
-                    userId,
-                    rawText: fallback.raw_text,
-                    language: fallback.language,
-                    source: fallback.source,
-                    isAutoGenerated: fallback.is_auto_generated,
-                    confidence: fallback.confidence,
-                })
-            }
-            throw error
-        }
-
-        if (!data) throw new Error('Versión no encontrada.')
-
-        const version = data as SongLyricsVersion
+        const version = await getById<SongLyricsVersion>('song_lyrics_versions', versionId)
+        if (!version || version.song_id !== songId) throw new Error('Versión no encontrada.')
         return this.saveLyrics({
             songId,
             userId,
@@ -232,90 +132,46 @@ export const lyricsService = {
     },
 
     async submitProposal(songId: string, userId: string, proposedRawText: string, note?: string): Promise<SongLyricsProposal> {
-        const payload = {
+        const groupId = await requireGroup(songId)
+        const data = {
             song_id: songId,
+            group_id: groupId,
             proposed_by: userId,
             proposed_raw_text: proposedRawText.trim(),
             note: note?.trim() || null,
             status: 'pending' as LyricsProposalStatus,
+            reviewed_by: null,
+            reviewed_at: null,
+            created_at: nowIso(),
         }
-
-        // song_lyrics_proposals has two FKs to profiles (proposed_by, reviewed_by):
-        // an embedded `profiles(...)` select is ambiguous, so proposers are loaded apart.
-        const { data, error } = await supabase
-            .from('song_lyrics_proposals')
-            .insert(payload)
-            .select('*')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const proposal = writeFallbackProposal(payload)
-                await logLyricsActivity(songId, userId, 'lyrics_proposed')
-                return proposal
-            }
-            throw error
-        }
-
+        const ref = await addDoc(collection(db, 'song_lyrics_proposals'), data)
         await logLyricsActivity(songId, userId, 'lyrics_proposed')
-        const [withProposer] = await attachProposers([data as SongLyricsProposal])
+        const { group_id: _groupId, ...proposal } = data
+        const [withProposer] = await attachProposers([{ id: ref.id, ...proposal }])
         return withProposer
     },
 
     async listProposals(songId: string): Promise<SongLyricsProposal[]> {
-        const { data, error } = await supabase
-            .from('song_lyrics_proposals')
-            .select('*')
-            .eq('song_id', songId)
-            .order('created_at', { ascending: false })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                return readFallbackProposals(songId)
-            }
-            throw error
-        }
-
-        return attachProposers((data ?? []) as SongLyricsProposal[])
+        const groupId = await requireGroup(songId)
+        const proposals = await queryDocs<SongLyricsProposal>('song_lyrics_proposals', ...songScope(groupId, songId))
+        return attachProposers(proposals.sort((a, b) => b.created_at.localeCompare(a.created_at)))
     },
 
-    async reviewProposal(
-        proposalId: string,
-        reviewerId: string,
-        action: Extract<LyricsProposalStatus, 'approved' | 'rejected'>
-    ): Promise<void> {
-        const { data: proposal, error: proposalError } = await supabase
-            .from('song_lyrics_proposals')
-            .select('*')
-            .eq('id', proposalId)
-            .maybeSingle()
-
-        if (proposalError) {
-            if (isMissingRelationError(proposalError)) {
-                reviewFallbackProposal(proposalId, reviewerId, action)
-                return
-            }
-            throw proposalError
-        }
-
+    async reviewProposal(proposalId: string, reviewerId: string, action: Extract<LyricsProposalStatus, 'approved' | 'rejected'>): Promise<void> {
+        const proposal = await getById<SongLyricsProposal>('song_lyrics_proposals', proposalId)
         if (!proposal) throw new Error('Esta propuesta ya no existe.')
 
-        const { error: reviewError } = await supabase
-            .from('song_lyrics_proposals')
-            .update({
-                status: action,
-                reviewed_by: reviewerId,
-                reviewed_at: new Date().toISOString(),
-            })
-            .eq('id', proposalId)
-
-        if (reviewError) throw reviewError
+        await updateDoc(doc(db, 'song_lyrics_proposals', proposalId), {
+            status: action,
+            reviewed_by: reviewerId,
+            reviewed_at: nowIso(),
+        })
 
         if (action === 'approved') {
             await this.saveLyrics({
-                songId: proposal.song_id as string,
+                songId: proposal.song_id,
                 userId: reviewerId,
-                rawText: proposal.proposed_raw_text as string,
+                rawText: proposal.proposed_raw_text,
                 source: 'manual',
                 isAutoGenerated: false,
             })
@@ -323,92 +179,38 @@ export const lyricsService = {
     },
 
     async setVerified(songId: string, userId: string, verified: boolean): Promise<void> {
-        const payload = {
+        await updateDoc(doc(db, 'song_lyrics', songId), {
             is_verified: verified,
             verified_by: verified ? userId : null,
-            verified_at: verified ? new Date().toISOString() : null,
+            verified_at: verified ? nowIso() : null,
             updated_by: userId,
-        }
-
-        const { error } = await supabase
-            .from('song_lyrics')
-            .update(payload)
-            .eq('song_id', songId)
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const fallback = readFallbackLyrics(songId)
-                if (!fallback) return
-                const store = readLyricsFallbackStore()
-                store[songId] = {
-                    lyrics: {
-                        ...fallback,
-                        is_verified: verified,
-                        verified_by: verified ? userId : null,
-                        verified_at: verified ? new Date().toISOString() : null,
-                        updated_by: userId,
-                        updated_at: new Date().toISOString(),
-                    },
-                    lines: fallback.lines ?? [],
-                }
-                writeLyricsFallbackStore(store)
-                return
-            }
-            throw error
-        }
-
+        })
         await logLyricsActivity(songId, userId, 'lyrics_verified', { verified })
     },
 
     async getTranslation(songId: string, language: TranslationLanguage): Promise<SongLyricsTranslation | null> {
-        const { data, error } = await supabase
-            .from('song_lyrics_translations')
-            .select('*')
-            .eq('song_id', songId)
-            .eq('language', language)
-            .maybeSingle()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const entries = readFallbackTranslations(songId)
-                return entries.find((entry) => entry.language === language) ?? null
-            }
-            throw error
-        }
-
-        return (data as SongLyricsTranslation | null) ?? null
+        return getById<SongLyricsTranslation>('song_lyrics_translations', `${songId}_${language}`).catch(() => null)
     },
 
-    async translateLyrics(
-        songId: string,
-        userId: string,
-        targetLanguage: TranslationLanguage,
-        baseRawText: string
-    ): Promise<SongLyricsTranslation> {
+    async translateLyrics(songId: string, userId: string, targetLanguage: TranslationLanguage, baseRawText: string): Promise<SongLyricsTranslation> {
+        const groupId = await requireGroup(songId)
         const translated = await translateText(baseRawText, targetLanguage)
-
-        const payload = {
+        const id = `${songId}_${targetLanguage}`
+        const existing = await getById<SongLyricsTranslation>('song_lyrics_translations', id).catch(() => null)
+        const now = nowIso()
+        const data = {
             song_id: songId,
+            group_id: groupId,
             language: targetLanguage,
             raw_text: translated,
             source: 'machine' as const,
             updated_by: userId,
+            created_at: existing?.created_at ?? now,
+            updated_at: now,
         }
-
-        const { data, error } = await supabase
-            .from('song_lyrics_translations')
-            .upsert(payload, { onConflict: 'song_id,language' })
-            .select('*')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                return upsertFallbackTranslation(payload)
-            }
-            throw error
-        }
-
-        return data as SongLyricsTranslation
+        await setDoc(doc(db, 'song_lyrics_translations', id), data)
+        const { group_id: _groupId, ...translation } = data
+        return { id, ...translation }
     },
 
     /** Template with timestamps to start writing synced lyrics. */
@@ -444,54 +246,30 @@ export const lyricsService = {
 
 /**
  * Every save appends the saved text as a new version, so the previous text is already
- * in the history. Only lyrics written before versioning existed (no versions yet) are
- * snapshotted once, so they can still be restored.
+ * in the history. Only lyrics written before versioning existed are snapshotted once.
  */
 async function snapshotVersion(input: SaveLyricsInput): Promise<void> {
     const existing = await lyricsService.getLyrics(input.songId)
-    if (!existing) return
-
-    if (existing.raw_text.trim() === input.rawText.trim()) return
-
+    if (!existing || existing.raw_text.trim() === input.rawText.trim()) return
     const versions = await lyricsService.listVersions(input.songId)
     if (versions.length > 0) return
-
     await appendVersion(existing, existing.updated_by || input.userId)
 }
 
 async function appendVersion(lyrics: SongLyrics, createdBy: string): Promise<void> {
-    const { data: latest, error: latestError } = await supabase
-        .from('song_lyrics_versions')
-        .select('version_number')
-        .eq('song_id', lyrics.song_id)
-        .order('version_number', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-    const nextVersion = ((latest?.version_number as number | undefined) ?? 0) + 1
-
-    const payload = {
+    const versions = await lyricsService.listVersions(lyrics.song_id)
+    await addDoc(collection(db, 'song_lyrics_versions'), {
         song_id: lyrics.song_id,
-        version_number: nextVersion,
+        group_id: await requireGroup(lyrics.song_id),
+        version_number: (versions[0]?.version_number ?? 0) + 1,
         raw_text: lyrics.raw_text,
         language: lyrics.language,
         source: lyrics.source,
         is_auto_generated: lyrics.is_auto_generated,
         confidence: lyrics.confidence,
         created_by: createdBy,
-    }
-
-    const { error } = await supabase
-        .from('song_lyrics_versions')
-        .insert(payload)
-
-    if (error) {
-        if (isMissingRelationError(error) || isMissingRelationError(latestError)) {
-            appendFallbackVersion(lyrics, createdBy)
-            return
-        }
-        throw error
-    }
+        created_at: nowIso(),
+    })
 }
 
 function parseTimedLyrics(songId: string, rawText: string): SongLyricLine[] {
@@ -596,200 +374,6 @@ async function logLyricsActivity(
 }
 
 async function attachProposers(proposals: SongLyricsProposal[]): Promise<SongLyricsProposal[]> {
-    const ids = Array.from(new Set(proposals.map((proposal) => proposal.proposed_by).filter(Boolean)))
-    if (ids.length === 0) return proposals
-
-    const { data, error } = await supabase
-        .from('profiles')
-        .select('id, display_name, username, avatar_url, bio, created_at, updated_at')
-        .in('id', ids)
-
-    if (error) {
-        console.warn('[Lyrics] Failed to load proposers:', error)
-        return proposals
-    }
-
-    const byId = new Map(((data ?? []) as Profile[]).map((profile) => [profile.id, profile]))
-    return proposals.map((proposal) => ({ ...proposal, proposer: proposal.proposer ?? byId.get(proposal.proposed_by) }))
-}
-
-function isMissingRelationError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''}`.toLowerCase()
-    return raw.includes('42p01') || raw.includes('pgrst205') || raw.includes('does not exist')
-}
-
-function readJson<T>(key: string, fallback: T): T {
-    if (typeof window === 'undefined') return fallback
-    try {
-        const raw = window.localStorage.getItem(key)
-        if (!raw) return fallback
-        return JSON.parse(raw) as T
-    } catch {
-        return fallback
-    }
-}
-
-function writeJson<T>(key: string, value: T): void {
-    if (typeof window === 'undefined') return
-    try {
-        window.localStorage.setItem(key, JSON.stringify(value))
-    } catch {
-        // Ignore storage quota restrictions.
-    }
-}
-
-function readLyricsFallbackStore(): LyricsFallbackStore {
-    return readJson<LyricsFallbackStore>(STORAGE_KEYS.lyrics, {})
-}
-
-function writeLyricsFallbackStore(store: LyricsFallbackStore): void {
-    writeJson(STORAGE_KEYS.lyrics, store)
-}
-
-function readFallbackLyrics(songId: string): SongLyrics | null {
-    const store = readLyricsFallbackStore()
-    const entry = store[songId]
-    if (!entry) return null
-    return {
-        ...entry.lyrics,
-        lines: entry.lines,
-    }
-}
-
-function writeFallbackLyrics(input: SaveLyricsInput, lines: SongLyricLine[]): SongLyrics {
-    const store = readLyricsFallbackStore()
-    const existing = store[input.songId]
-    const now = new Date().toISOString()
-
-    const lyrics: SongLyrics = {
-        id: existing?.lyrics.id ?? crypto.randomUUID(),
-        song_id: input.songId,
-        raw_text: input.rawText.trim(),
-        language: input.language ?? 'es',
-        source: input.source ?? 'manual',
-        is_auto_generated: input.isAutoGenerated ?? false,
-        confidence: input.confidence ?? null,
-        is_verified: false,
-        verified_by: null,
-        verified_at: null,
-        updated_by: input.userId,
-        created_at: existing?.lyrics.created_at ?? now,
-        updated_at: now,
-        lines,
-    }
-
-    store[input.songId] = { lyrics, lines }
-    writeLyricsFallbackStore(store)
-    appendFallbackVersion(lyrics, input.userId)
-    return lyrics
-}
-
-function readFallbackVersions(songId: string): SongLyricsVersion[] {
-    const store = readJson<VersionsFallbackStore>(STORAGE_KEYS.versions, {})
-    return store[songId] ?? []
-}
-
-function appendFallbackVersion(lyrics: SongLyrics, createdBy: string): void {
-    const store = readJson<VersionsFallbackStore>(STORAGE_KEYS.versions, {})
-    const current = store[lyrics.song_id] ?? []
-    const nextVersion = ((current[0]?.version_number ?? 0) + 1)
-
-    const version: SongLyricsVersion = {
-        id: crypto.randomUUID(),
-        song_id: lyrics.song_id,
-        version_number: nextVersion,
-        raw_text: lyrics.raw_text,
-        language: lyrics.language,
-        source: lyrics.source,
-        is_auto_generated: lyrics.is_auto_generated,
-        confidence: lyrics.confidence,
-        created_by: createdBy,
-        created_at: new Date().toISOString(),
-    }
-
-    store[lyrics.song_id] = [version, ...current].slice(0, 100)
-    writeJson(STORAGE_KEYS.versions, store)
-}
-
-function readFallbackProposals(songId: string): SongLyricsProposal[] {
-    const all = readJson<ProposalsFallbackStore>(STORAGE_KEYS.proposals, [])
-    return all.filter((item) => item.song_id === songId).sort((a, b) => b.created_at.localeCompare(a.created_at))
-}
-
-function writeFallbackProposal(payload: {
-    song_id: string
-    proposed_by: string
-    proposed_raw_text: string
-    note: string | null
-    status: LyricsProposalStatus
-}): SongLyricsProposal {
-    const all = readJson<ProposalsFallbackStore>(STORAGE_KEYS.proposals, [])
-    const proposal: SongLyricsProposal = {
-        id: crypto.randomUUID(),
-        song_id: payload.song_id,
-        proposed_by: payload.proposed_by,
-        proposed_raw_text: payload.proposed_raw_text,
-        note: payload.note,
-        status: payload.status,
-        reviewed_by: null,
-        reviewed_at: null,
-        created_at: new Date().toISOString(),
-    }
-
-    writeJson(STORAGE_KEYS.proposals, [proposal, ...all].slice(0, 500))
-    return proposal
-}
-
-function reviewFallbackProposal(
-    proposalId: string,
-    reviewerId: string,
-    action: Extract<LyricsProposalStatus, 'approved' | 'rejected'>
-): void {
-    const all = readJson<ProposalsFallbackStore>(STORAGE_KEYS.proposals, [])
-    const next = all.map((item) => {
-        if (item.id !== proposalId) return item
-        return {
-            ...item,
-            status: action,
-            reviewed_by: reviewerId,
-            reviewed_at: new Date().toISOString(),
-        }
-    })
-    writeJson(STORAGE_KEYS.proposals, next)
-}
-
-function readFallbackTranslations(songId: string): SongLyricsTranslation[] {
-    const store = readJson<TranslationsFallbackStore>(STORAGE_KEYS.translations, {})
-    return store[songId] ?? []
-}
-
-function upsertFallbackTranslation(payload: {
-    song_id: string
-    language: TranslationLanguage
-    raw_text: string
-    source: 'machine' | 'manual'
-    updated_by: string
-}): SongLyricsTranslation {
-    const store = readJson<TranslationsFallbackStore>(STORAGE_KEYS.translations, {})
-    const current = store[payload.song_id] ?? []
-    const existing = current.find((item) => item.language === payload.language)
-    const now = new Date().toISOString()
-
-    const nextItem: SongLyricsTranslation = {
-        id: existing?.id ?? crypto.randomUUID(),
-        song_id: payload.song_id,
-        language: payload.language,
-        raw_text: payload.raw_text,
-        source: payload.source,
-        updated_by: payload.updated_by,
-        created_at: existing?.created_at ?? now,
-        updated_at: now,
-    }
-
-    const filtered = current.filter((item) => item.language !== payload.language)
-    store[payload.song_id] = [nextItem, ...filtered]
-    writeJson(STORAGE_KEYS.translations, store)
-    return nextItem
+    const profiles = await fetchProfilesMap(proposals.map((proposal) => proposal.proposed_by))
+    return proposals.map((proposal) => ({ ...proposal, proposer: proposal.proposer ?? profiles.get(proposal.proposed_by) }))
 }

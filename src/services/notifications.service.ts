@@ -1,56 +1,34 @@
-import { supabase } from '@lib/supabase/client'
+import { collection, deleteDoc, doc, getCountFromServer, limit, orderBy, query, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { queryDocs } from '@lib/firebase/db'
 import type { AppNotification } from '@/types'
 
 export const notificationsService = {
     async listForUser(userId: string): Promise<AppNotification[]> {
-        const { data, error } = await supabase
-            .from('notifications')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(50)
-
-        if (error) throw error
-        return (data ?? []) as AppNotification[]
+        return queryDocs<AppNotification>('notifications', where('user_id', '==', userId), orderBy('created_at', 'desc'), limit(50))
     },
 
-    /** Unread count only (HEAD request: no rows are transferred). */
+    /** Unread count (an aggregation query: billed as a single read). */
     async countUnread(userId: string): Promise<number> {
-        const { count, error } = await supabase
-            .from('notifications')
-            .select('id', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('read', false)
-
-        if (error) throw error
-        return count ?? 0
+        const snap = await getCountFromServer(
+            query(collection(db, 'notifications'), where('user_id', '==', userId), where('read', '==', false))
+        )
+        return snap.data().count
     },
 
     async markAsRead(id: string): Promise<void> {
-        const { error } = await supabase
-            .from('notifications')
-            .update({ read: true })
-            .eq('id', id)
-
-        if (error) throw error
+        await updateDoc(doc(db, 'notifications', id), { read: true })
     },
 
     async markAllAsRead(userId: string): Promise<void> {
-        const { error } = await supabase
-            .from('notifications')
-            .update({ read: true })
-            .eq('user_id', userId)
-            .eq('read', false)
-
-        if (error) throw error
+        const unread = await queryDocs<AppNotification>('notifications', where('user_id', '==', userId), where('read', '==', false), limit(400))
+        if (unread.length === 0) return
+        const batch = writeBatch(db)
+        for (const item of unread) batch.update(doc(db, 'notifications', item.id), { read: true })
+        await batch.commit()
     },
 
     async remove(id: string): Promise<void> {
-        const { error } = await supabase
-            .from('notifications')
-            .delete()
-            .eq('id', id)
-
-        if (error) throw error
+        await deleteDoc(doc(db, 'notifications', id))
     },
 }

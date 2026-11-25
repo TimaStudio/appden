@@ -1,8 +1,7 @@
-﻿import { supabase } from '@lib/supabase/client'
-import { reportLocalFallback } from '@lib/diagnostics/fallback'
-import type { GroupActivity, GroupActivityAction } from '@/types'
-
-const FALLBACK_STORAGE_KEY = 'appden:group-activity:fallback:v1'
+﻿import { addDoc, collection, limit, orderBy, where } from 'firebase/firestore'
+import { db, STORAGE_BUCKETS, getStorageUrl } from '@lib/firebase/client'
+import { fetchProfilesMap, getManyByIds, nowIso, queryDocs, songGroupId } from '@lib/firebase/db'
+import type { GroupActivity, GroupActivityAction, Song } from '@/types'
 
 type CreateActivityInput = {
     groupId: string
@@ -14,108 +13,55 @@ type CreateActivityInput = {
 }
 
 export const groupActivityService = {
-    async list(groupId: string, limit = 25): Promise<GroupActivity[]> {
-        const fallback = readFallback().filter((item) => item.group_id === groupId)
-
-        const { data, error } = await supabase
-            .from('group_activity')
-            .select('*, actor:profiles(id, display_name, avatar_url), song:songs(id, title, artist_name, cover_url)')
-            .eq('group_id', groupId)
-            .order('created_at', { ascending: false })
-            .limit(limit)
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('group activity', error)
-                return fallback.slice(0, limit)
-            }
-            throw error
-        }
-
-        return (data ?? []) as GroupActivity[]
+    async list(groupId: string, limitCount = 25): Promise<GroupActivity[]> {
+        const rows = await queryDocs<GroupActivity>(
+            'group_activity',
+            where('group_id', '==', groupId),
+            orderBy('created_at', 'desc'),
+            limit(limitCount)
+        )
+        const [profiles, songs] = await Promise.all([
+            fetchProfilesMap(rows.map((row) => row.actor_id)),
+            getManyByIds<Song>('songs', rows.map((row) => row.song_id ?? ''), where('group_id', '==', groupId)).catch(() => []),
+        ])
+        const songsById = new Map(
+            await Promise.all(
+                songs.map(async (song) => [
+                    song.id,
+                    {
+                        id: song.id,
+                        title: song.title,
+                        artist_name: song.artist_name,
+                        cover_url: song.cover_url ? await getStorageUrl(STORAGE_BUCKETS.COVERS, song.cover_url).catch(() => null) : null,
+                    },
+                ] as const)
+            )
+        )
+        return rows.map((row) => ({
+            ...row,
+            actor: profiles.get(row.actor_id),
+            song: row.song_id ? songsById.get(row.song_id) : undefined,
+        }))
     },
 
+    /** Best effort: a missing activity row must never break the action that caused it. */
     async create(input: CreateActivityInput): Promise<void> {
-        const payload = {
-            group_id: input.groupId,
-            actor_id: input.actorId,
-            action_type: input.actionType,
-            song_id: input.songId ?? null,
-            comment_id: input.commentId ?? null,
-            payload: input.payload ?? {},
-        }
-
-        const { error } = await supabase
-            .from('group_activity')
-            .insert(payload)
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('group activity', error)
-                writeFallback(payload)
-                return
-            }
-            throw error
+        try {
+            await addDoc(collection(db, 'group_activity'), {
+                group_id: input.groupId,
+                actor_id: input.actorId,
+                action_type: input.actionType,
+                song_id: input.songId ?? null,
+                comment_id: input.commentId ?? null,
+                payload: input.payload ?? {},
+                created_at: nowIso(),
+            })
+        } catch (error) {
+            console.warn('[Activity] No se pudo registrar la actividad:', error)
         }
     },
 
     async resolveSongGroupId(songId: string): Promise<string | null> {
-        const { data, error } = await supabase
-            .from('songs')
-            .select('group_id')
-            .eq('id', songId)
-            .maybeSingle()
-
-        if (error) return null
-        return (data?.group_id as string | undefined) ?? null
+        return songGroupId(songId)
     },
-}
-
-function readFallback(): GroupActivity[] {
-    if (typeof window === 'undefined') return []
-    try {
-        const raw = window.localStorage.getItem(FALLBACK_STORAGE_KEY)
-        if (!raw) return []
-        return JSON.parse(raw) as GroupActivity[]
-    } catch {
-        return []
-    }
-}
-
-function writeFallback(input: {
-    group_id: string
-    actor_id: string
-    action_type: GroupActivityAction
-    song_id: string | null
-    comment_id: string | null
-    payload: Record<string, unknown>
-}): void {
-    if (typeof window === 'undefined') return
-    const current = readFallback()
-    const next: GroupActivity[] = [
-        {
-            id: crypto.randomUUID(),
-            group_id: input.group_id,
-            actor_id: input.actor_id,
-            action_type: input.action_type,
-            song_id: input.song_id,
-            comment_id: input.comment_id,
-            payload: input.payload,
-            created_at: new Date().toISOString(),
-        },
-        ...current,
-    ].slice(0, 200)
-
-    try {
-        window.localStorage.setItem(FALLBACK_STORAGE_KEY, JSON.stringify(next))
-    } catch {
-        // Ignore storage quota limits.
-    }
-}
-
-function isMissingRelationError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''}`.toLowerCase()
-    return raw.includes('42p01') || raw.includes('pgrst205') || raw.includes('does not exist')
 }

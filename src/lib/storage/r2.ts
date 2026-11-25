@@ -1,12 +1,12 @@
 // ============================================================
 // Cloudflare R2 storage client (through the appden-storage Worker).
 //
-// Mirrors the subset of `supabase.storage.from(bucket)` the app uses,
-// so services only swap `supabase.storage` for `storage`.
+// Bucket API used by the services: upload, remove and signed URLs.
 // Objects live under `<bucket>/<path>` — the same paths stored in the DB.
 // ============================================================
 
-export const STORAGE_URL = ((import.meta.env.VITE_STORAGE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '')
+const DEFAULT_STORAGE_URL = 'https://appden-storage.albertomanana150307.workers.dev'
+export const STORAGE_URL = (((import.meta.env.VITE_STORAGE_URL as string | undefined) ?? '').trim() || DEFAULT_STORAGE_URL).replace(/\/+$/, '')
 export const isR2Storage = STORAGE_URL.length > 0
 
 type StorageError = { message: string; statusCode?: string | number }
@@ -24,7 +24,7 @@ export interface StorageBucketApi {
 
 let getAccessToken: () => Promise<string | null> = async () => null
 
-/** Called once by the Supabase client module (avoids an import cycle). */
+/** Called once by the Firebase client module (avoids an import cycle). */
 export function configureR2Auth(tokenGetter: () => Promise<string | null>): void {
     getAccessToken = tokenGetter
 }

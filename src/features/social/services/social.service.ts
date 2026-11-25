@@ -1,132 +1,57 @@
-﻿import { supabase } from '@lib/supabase/client'
-import { reportLocalFallback } from '@lib/diagnostics/fallback'
+﻿import { addDoc, collection, deleteDoc, doc, getDoc, setDoc, updateDoc, where } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { fetchProfilesMap, nowIso, queryDocs, songGroupId } from '@lib/firebase/db'
 import { groupActivityService } from '@features/social/services/activity-feed.service'
 import type { SongComment, SongReactionType } from '@/types'
 import type { SongSocialState } from '@features/social/types'
 
-const FALLBACK_STORAGE_KEY = 'appden:song-social:fallback:v3'
+const EMPTY_REACTIONS: Record<SongReactionType, number> = { fire: 0, heart: 0, headphones: 0 }
 
-type SocialFallbackStore = {
-    likesBySong: Record<string, string[]>
-    comments: SongComment[]
-    commentLikesByComment: Record<string, string[]>
-    reactionsBySong: Record<string, Record<string, SongReactionType>>
+type UserRow = { id: string; user_id: string }
+type ReactionRow = UserRow & { reaction: SongReactionType }
+type CommentLikeRow = UserRow & { comment_id: string }
+
+async function requireGroup(songId: string): Promise<string> {
+    const groupId = await songGroupId(songId)
+    if (!groupId) throw new Error('No encontramos esta canción.')
+    return groupId
 }
 
-const EMPTY_REACTIONS: Record<SongReactionType, number> = {
-    fire: 0,
-    heart: 0,
-    headphones: 0,
+async function withAuthors(comments: SongComment[]): Promise<SongComment[]> {
+    const profiles = await fetchProfilesMap(comments.map((comment) => comment.user_id))
+    return comments.map((comment) => ({ ...comment, profile: profiles.get(comment.user_id) }))
 }
 
 export const songSocialService = {
     async getSongSocial(songId: string, userId: string): Promise<SongSocialState> {
-        const fallback = readFallbackStore()
-        let likesCount = fallback.likesBySong[songId]?.length ?? 0
-        let likedByMe = (fallback.likesBySong[songId] ?? []).includes(userId)
-        let comments = fallback.comments
-            .filter((comment) => comment.song_id === songId)
-            .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        const groupId = await requireGroup(songId)
+        const scope = [where('group_id', '==', groupId), where('song_id', '==', songId)]
 
-        let commentLikeCounts: Record<string, number> = {}
-        let likedCommentIds: string[] = []
-        let reactionCounts = computeFallbackReactionCounts(fallback, songId)
-        let reactionByMe: SongReactionType | null = fallback.reactionsBySong[songId]?.[userId] ?? null
-
-        const likesCountPromise = supabase
-            .from('song_likes')
-            .select('*', { count: 'exact', head: true })
-            .eq('song_id', songId)
-
-        const likedByMePromise = supabase
-            .from('song_likes')
-            .select('id')
-            .eq('song_id', songId)
-            .eq('user_id', userId)
-            .maybeSingle()
-
-        const commentsPromise = supabase
-            .from('song_comments')
-            .select('*, profile:profiles(id, display_name, avatar_url)')
-            .eq('song_id', songId)
-            .order('created_at', { ascending: true })
-
-        const reactionPromise = supabase
-            .from('song_reactions')
-            .select('song_id, user_id, reaction')
-            .eq('song_id', songId)
-
-        const [likesCountResult, likedByMeResult, commentsResult, reactionsResult] = await Promise.all([
-            likesCountPromise,
-            likedByMePromise,
-            commentsPromise,
-            reactionPromise,
+        const [likes, rawComments, reactions, commentLikes] = await Promise.all([
+            queryDocs<UserRow>('song_likes', ...scope),
+            queryDocs<SongComment>('song_comments', ...scope),
+            queryDocs<ReactionRow>('song_reactions', ...scope),
+            queryDocs<CommentLikeRow>('song_comment_likes', ...scope),
         ])
 
-        if (likesCountResult.error && !isMissingRelationError(likesCountResult.error)) {
-            throw likesCountResult.error
-        }
-        if (!likesCountResult.error) {
-            likesCount = likesCountResult.count ?? 0
-        }
-
-        if (likedByMeResult.error && !isMissingRelationError(likedByMeResult.error)) {
-            throw likedByMeResult.error
-        }
-        if (!likedByMeResult.error) {
-            likedByMe = !!likedByMeResult.data
+        const comments = await withAuthors(rawComments.sort((a, b) => a.created_at.localeCompare(b.created_at)))
+        const commentLikeCounts: Record<string, number> = {}
+        const likedCommentIds: string[] = []
+        for (const row of commentLikes) {
+            commentLikeCounts[row.comment_id] = (commentLikeCounts[row.comment_id] ?? 0) + 1
+            if (row.user_id === userId) likedCommentIds.push(row.comment_id)
         }
 
-        if (commentsResult.error && !isMissingRelationError(commentsResult.error)) {
-            throw commentsResult.error
-        }
-        if (!commentsResult.error) {
-            comments = (commentsResult.data ?? []) as SongComment[]
-        }
-
-        const commentIds = comments.map((item) => item.id)
-        if (commentIds.length > 0) {
-            const { data: commentLikesRows, error: commentLikesError } = await supabase
-                .from('song_comment_likes')
-                .select('comment_id, user_id')
-                .in('comment_id', commentIds)
-
-            if (commentLikesError && !isMissingRelationError(commentLikesError)) {
-                throw commentLikesError
-            }
-
-            if (!commentLikesError) {
-                for (const row of commentLikesRows ?? []) {
-                    const key = String(row.comment_id)
-                    commentLikeCounts[key] = (commentLikeCounts[key] ?? 0) + 1
-                    if (row.user_id === userId) likedCommentIds.push(key)
-                }
-            } else {
-                const fallbackLikes = fallback.commentLikesByComment
-                commentLikeCounts = commentIds.reduce<Record<string, number>>((acc, id) => {
-                    acc[id] = fallbackLikes[id]?.length ?? 0
-                    return acc
-                }, {})
-                likedCommentIds = commentIds.filter((id) => (fallbackLikes[id] ?? []).includes(userId))
-            }
-        }
-
-        if (reactionsResult.error && !isMissingRelationError(reactionsResult.error)) {
-            throw reactionsResult.error
-        }
-        if (!reactionsResult.error) {
-            reactionCounts = { ...EMPTY_REACTIONS }
-            reactionByMe = null
-            for (const row of reactionsResult.data ?? []) {
-                const reaction = row.reaction as SongReactionType
-                reactionCounts[reaction] = (reactionCounts[reaction] ?? 0) + 1
-                if (row.user_id === userId) reactionByMe = reaction
-            }
+        const reactionCounts = { ...EMPTY_REACTIONS }
+        let reactionByMe: SongReactionType | null = null
+        for (const row of reactions) {
+            reactionCounts[row.reaction] = (reactionCounts[row.reaction] ?? 0) + 1
+            if (row.user_id === userId) reactionByMe = row.reaction
         }
 
         return {
-            likesCount,
-            likedByMe,
+            likesCount: likes.length,
+            likedByMe: likes.some((row) => row.user_id === userId),
             comments,
             likedCommentIds,
             commentLikeCounts,
@@ -136,355 +61,80 @@ export const songSocialService = {
     },
 
     async toggleLike(songId: string, userId: string): Promise<boolean> {
-        const { data: existing, error: existingError } = await supabase
-            .from('song_likes')
-            .select('id')
-            .eq('song_id', songId)
-            .eq('user_id', userId)
-            .maybeSingle()
-
-        if (existingError) {
-            if (isMissingRelationError(existingError)) {
-                reportLocalFallback('song social', existingError)
-                const liked = toggleLikeFallback(songId, userId)
-                await logActivity(songId, userId, 'song_liked', { liked })
-                return liked
-            }
-            throw existingError
-        }
-
-        if (existing?.id) {
-            const { error: deleteError } = await supabase
-                .from('song_likes')
-                .delete()
-                .eq('song_id', songId)
-                .eq('user_id', userId)
-
-            if (deleteError) throw deleteError
-            await logActivity(songId, userId, 'song_liked', { liked: false })
-            return false
-        }
-
-        const { error: insertError } = await supabase
-            .from('song_likes')
-            .insert({ song_id: songId, user_id: userId })
-
-        if (insertError) throw insertError
-        await logActivity(songId, userId, 'song_liked', { liked: true })
-        return true
+        const groupId = await requireGroup(songId)
+        const ref = doc(db, 'song_likes', `${songId}_${userId}`)
+        const existing = await getDoc(ref)
+        const liked = !existing.exists()
+        if (liked) await setDoc(ref, { song_id: songId, user_id: userId, group_id: groupId, created_at: nowIso() })
+        else await deleteDoc(ref)
+        await groupActivityService.create({ groupId, actorId: userId, actionType: 'song_liked', songId, payload: { liked } })
+        return liked
     },
 
     async setReaction(songId: string, userId: string, reaction: SongReactionType | null): Promise<void> {
-        if (reaction == null) {
-            const { error } = await supabase
-                .from('song_reactions')
-                .delete()
-                .eq('song_id', songId)
-                .eq('user_id', userId)
-
-            if (error) {
-                if (isMissingRelationError(error)) {
-                    reportLocalFallback('song social', error)
-                    setReactionFallback(songId, userId, null)
-                    return
-                }
-                throw error
-            }
-            await logActivity(songId, userId, 'song_reacted', { reaction: null })
-            return
-        }
-
-        const payload = { song_id: songId, user_id: userId, reaction }
-        const { error } = await supabase
-            .from('song_reactions')
-            .upsert(payload, { onConflict: 'song_id,user_id' })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('song social', error)
-                setReactionFallback(songId, userId, reaction)
-                await logActivity(songId, userId, 'song_reacted', { reaction })
-                return
-            }
-            throw error
-        }
-
-        await logActivity(songId, userId, 'song_reacted', { reaction })
+        const groupId = await requireGroup(songId)
+        const ref = doc(db, 'song_reactions', `${songId}_${userId}`)
+        if (reaction == null) await deleteDoc(ref)
+        else await setDoc(ref, { song_id: songId, user_id: userId, group_id: groupId, reaction, created_at: nowIso() })
+        await groupActivityService.create({ groupId, actorId: userId, actionType: 'song_reacted', songId, payload: { reaction } })
     },
 
-    async addComment(
-        songId: string,
-        userId: string,
-        body: string,
-        parentId?: string | null
-    ): Promise<SongComment> {
+    async addComment(songId: string, userId: string, body: string, parentId?: string | null): Promise<SongComment> {
         const cleanBody = body.trim()
-        if (!cleanBody) {
-            throw new Error('empty-comment')
-        }
+        if (!cleanBody) throw new Error('empty-comment')
 
-        const payload = {
+        const groupId = await requireGroup(songId)
+        const now = nowIso()
+        const data = {
             song_id: songId,
+            group_id: groupId,
             user_id: userId,
             body: cleanBody.slice(0, 500),
             parent_id: parentId ?? null,
+            created_at: now,
+            updated_at: now,
         }
-
-        const { data, error } = await supabase
-            .from('song_comments')
-            .insert(payload)
-            .select('*, profile:profiles(id, display_name, avatar_url)')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const fallbackComment = addCommentFallback(payload)
-                await logActivity(songId, userId, 'song_commented', { parentId: parentId ?? null })
-                return fallbackComment
-            }
-            throw error
-        }
-
-        await logActivity(songId, userId, 'song_commented', { parentId: parentId ?? null })
-        return data as SongComment
+        const ref = await addDoc(collection(db, 'song_comments'), data)
+        await groupActivityService.create({
+            groupId,
+            actorId: userId,
+            actionType: 'song_commented',
+            songId,
+            commentId: ref.id,
+            payload: { parentId: parentId ?? null },
+        })
+        const [comment] = await withAuthors([{ id: ref.id, ...data }])
+        return comment
     },
 
-    async updateComment(commentId: string, userId: string, body: string): Promise<SongComment> {
+    async updateComment(commentId: string, _userId: string, body: string): Promise<SongComment> {
         const cleanBody = body.trim()
-        if (!cleanBody) {
-            throw new Error('empty-comment')
-        }
+        if (!cleanBody) throw new Error('empty-comment')
 
-        const { data, error } = await supabase
-            .from('song_comments')
-            .update({ body: cleanBody.slice(0, 500) })
-            .eq('id', commentId)
-            .eq('user_id', userId)
-            .select('*, profile:profiles(id, display_name, avatar_url)')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const fallbackComment = updateCommentFallback(commentId, userId, cleanBody)
-                if (!fallbackComment) {
-                    throw new Error('comment-not-found')
-                }
-                return fallbackComment
-            }
-            throw error
-        }
-
-        return data as SongComment
+        const ref = doc(db, 'song_comments', commentId)
+        await updateDoc(ref, { body: cleanBody.slice(0, 500), updated_at: nowIso() })
+        const snap = await getDoc(ref)
+        if (!snap.exists()) throw new Error('comment-not-found')
+        const [comment] = await withAuthors([{ id: snap.id, ...snap.data() } as SongComment])
+        return comment
     },
 
     async toggleCommentLike(commentId: string, userId: string): Promise<boolean> {
-        const { data: existing, error: existingError } = await supabase
-            .from('song_comment_likes')
-            .select('id')
-            .eq('comment_id', commentId)
-            .eq('user_id', userId)
-            .maybeSingle()
+        const commentSnap = await getDoc(doc(db, 'song_comments', commentId))
+        if (!commentSnap.exists()) throw new Error('comment-not-found')
+        const comment = commentSnap.data() as { song_id: string; group_id: string }
 
-        if (existingError) {
-            if (isMissingRelationError(existingError)) {
-                return toggleCommentLikeFallback(commentId, userId)
-            }
-            throw existingError
-        }
-
-        if (existing?.id) {
-            const { error: deleteError } = await supabase
-                .from('song_comment_likes')
-                .delete()
-                .eq('comment_id', commentId)
-                .eq('user_id', userId)
-
-            if (deleteError) throw deleteError
+        const ref = doc(db, 'song_comment_likes', `${commentId}_${userId}`)
+        const existing = await getDoc(ref)
+        if (existing.exists()) {
+            await deleteDoc(ref)
             return false
         }
-
-        const { error: insertError } = await supabase
-            .from('song_comment_likes')
-            .insert({ comment_id: commentId, user_id: userId })
-
-        if (insertError) throw insertError
+        await setDoc(ref, { comment_id: commentId, song_id: comment.song_id, group_id: comment.group_id, user_id: userId, created_at: nowIso() })
         return true
     },
 
-    async deleteComment(commentId: string, userId: string): Promise<void> {
-        const { error } = await supabase
-            .from('song_comments')
-            .delete()
-            .eq('id', commentId)
-            .eq('user_id', userId)
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                deleteCommentFallback(commentId, userId)
-                return
-            }
-            throw error
-        }
+    async deleteComment(commentId: string, _userId: string): Promise<void> {
+        await deleteDoc(doc(db, 'song_comments', commentId))
     },
-}
-
-function computeFallbackReactionCounts(
-    fallback: SocialFallbackStore,
-    songId: string
-): Record<SongReactionType, number> {
-    const map = fallback.reactionsBySong[songId] ?? {}
-    const counts = { ...EMPTY_REACTIONS }
-    for (const reaction of Object.values(map)) {
-        counts[reaction] = (counts[reaction] ?? 0) + 1
-    }
-    return counts
-}
-
-async function logActivity(
-    songId: string,
-    actorId: string,
-    actionType: 'song_liked' | 'song_reacted' | 'song_commented',
-    payload?: Record<string, unknown>
-): Promise<void> {
-    const groupId = await groupActivityService.resolveSongGroupId(songId)
-    if (!groupId) return
-    await groupActivityService.create({
-        groupId,
-        actorId,
-        actionType,
-        songId,
-        payload,
-    })
-}
-
-function toggleLikeFallback(songId: string, userId: string): boolean {
-    const store = readFallbackStore()
-    const current = new Set(store.likesBySong[songId] ?? [])
-    if (current.has(userId)) {
-        current.delete(userId)
-        store.likesBySong[songId] = Array.from(current)
-        writeFallbackStore(store)
-        return false
-    }
-    current.add(userId)
-    store.likesBySong[songId] = Array.from(current)
-    writeFallbackStore(store)
-    return true
-}
-
-function setReactionFallback(songId: string, userId: string, reaction: SongReactionType | null): void {
-    const store = readFallbackStore()
-    const songMap = { ...(store.reactionsBySong[songId] ?? {}) }
-    if (reaction == null) {
-        delete songMap[userId]
-    } else {
-        songMap[userId] = reaction
-    }
-    store.reactionsBySong[songId] = songMap
-    writeFallbackStore(store)
-}
-
-function addCommentFallback(payload: {
-    song_id: string
-    user_id: string
-    body: string
-    parent_id: string | null
-}): SongComment {
-    const store = readFallbackStore()
-    const now = new Date().toISOString()
-    const comment: SongComment = {
-        id: crypto.randomUUID(),
-        song_id: payload.song_id,
-        user_id: payload.user_id,
-        body: payload.body,
-        parent_id: payload.parent_id,
-        created_at: now,
-        updated_at: now,
-    }
-    store.comments.push(comment)
-    writeFallbackStore(store)
-    return comment
-}
-
-function updateCommentFallback(commentId: string, userId: string, body: string): SongComment | null {
-    const store = readFallbackStore()
-    const index = store.comments.findIndex(
-        (comment) => comment.id === commentId && comment.user_id === userId
-    )
-
-    if (index === -1) return null
-
-    const now = new Date().toISOString()
-    const current = store.comments[index]
-    const next: SongComment = {
-        ...current,
-        body: body.slice(0, 500),
-        updated_at: now,
-    }
-
-    store.comments[index] = next
-    writeFallbackStore(store)
-    return next
-}
-
-function toggleCommentLikeFallback(commentId: string, userId: string): boolean {
-    const store = readFallbackStore()
-    const current = new Set(store.commentLikesByComment[commentId] ?? [])
-    if (current.has(userId)) {
-        current.delete(userId)
-        store.commentLikesByComment[commentId] = Array.from(current)
-        writeFallbackStore(store)
-        return false
-    }
-
-    current.add(userId)
-    store.commentLikesByComment[commentId] = Array.from(current)
-    writeFallbackStore(store)
-    return true
-}
-
-function deleteCommentFallback(commentId: string, userId: string): void {
-    const store = readFallbackStore()
-    store.comments = store.comments.filter(
-        (comment) => !(comment.id === commentId && comment.user_id === userId)
-    )
-    writeFallbackStore(store)
-}
-
-function readFallbackStore(): SocialFallbackStore {
-    if (typeof window === 'undefined') {
-        return { likesBySong: {}, comments: [], commentLikesByComment: {}, reactionsBySong: {} }
-    }
-
-    try {
-        const raw = window.localStorage.getItem(FALLBACK_STORAGE_KEY)
-        if (!raw) {
-            return { likesBySong: {}, comments: [], commentLikesByComment: {}, reactionsBySong: {} }
-        }
-        const parsed = JSON.parse(raw) as SocialFallbackStore
-        return {
-            likesBySong: parsed.likesBySong ?? {},
-            comments: parsed.comments ?? [],
-            commentLikesByComment: parsed.commentLikesByComment ?? {},
-            reactionsBySong: parsed.reactionsBySong ?? {},
-        }
-    } catch {
-        return { likesBySong: {}, comments: [], commentLikesByComment: {}, reactionsBySong: {} }
-    }
-}
-
-function writeFallbackStore(store: SocialFallbackStore): void {
-    if (typeof window === 'undefined') return
-    try {
-        window.localStorage.setItem(FALLBACK_STORAGE_KEY, JSON.stringify(store))
-    } catch {
-        // Ignore storage quota issues.
-    }
-}
-
-function isMissingRelationError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''}`.toLowerCase()
-    return raw.includes('42p01') || raw.includes('pgrst205') || raw.includes('does not exist')
 }

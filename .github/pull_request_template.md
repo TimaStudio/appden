@@ -16,7 +16,7 @@
 - [ ] Frontend UI/UX
 - [ ] Player / audio
 - [ ] Auth
-- [ ] Supabase / SQL / Storage
+- [ ] Firestore rules / R2 Worker
 - [ ] DevOps / tooling
 
 ## Validation

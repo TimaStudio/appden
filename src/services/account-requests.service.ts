@@ -1,4 +1,6 @@
-import { supabase } from '@lib/supabase/client'
+import { doc, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { fetchProfilesMap, nowIso, queryDocs } from '@lib/firebase/db'
 import type { Profile } from '@/types'
 
 export type AccountRequest = {
@@ -14,31 +16,27 @@ export type AccountRequest = {
 
 export const accountRequestsService = {
     async listPending(): Promise<AccountRequest[]> {
-        const { data, error } = await supabase
-            .from('account_requests')
-            .select('*, profile:profiles(id, display_name, username, avatar_url)')
-            .eq('status', 'pending')
-            .order('created_at', { ascending: false })
-
-        if (error) throw error
-        return (data ?? []) as AccountRequest[]
+        const requests = await queryDocs<AccountRequest>('account_requests', where('status', '==', 'pending'))
+        const profiles = await fetchProfilesMap(requests.map((request) => request.profile_id))
+        return requests
+            .map((request) => ({ ...request, profile: profiles.get(request.profile_id) ?? null }))
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
     },
 
-    /** Approves the account (server-side check: caller must be an app admin). */
-    async approveRequest(requestId: string, adminId: string): Promise<void> {
-        const { error } = await supabase.rpc('approve_account_request', { p_request_id: requestId, p_admin_user_id: adminId })
-        if (error) throw error
+    /** Approves the account (the rules only let app admins do it). */
+    async approveRequest(requestId: string, _adminId: string): Promise<void> {
+        const batch = writeBatch(db)
+        batch.update(doc(db, 'account_requests', requestId), { status: 'approved', responded_at: nowIso() })
+        batch.update(doc(db, 'profiles', requestId), { is_approved: true, updated_at: nowIso() })
+        await batch.commit()
     },
 
     async rejectRequest(requestId: string, message?: string): Promise<void> {
-        const { error } = await supabase.rpc('reject_account_request', { p_request_id: requestId, p_message: message ?? null })
-        if (!error) return
-        // Fallback for environments without migration 015.
-        const { error: updateError } = await supabase
-            .from('account_requests')
-            .update({ status: 'rejected', message: message ?? null, responded_at: new Date().toISOString() })
-            .eq('id', requestId)
-        if (updateError) throw updateError
+        await updateDoc(doc(db, 'account_requests', requestId), {
+            status: 'rejected',
+            message: message ?? null,
+            responded_at: nowIso(),
+        })
     },
 }
 

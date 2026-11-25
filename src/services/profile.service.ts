@@ -1,85 +1,64 @@
-import { supabase, STORAGE_BUCKETS, storage } from '@lib/supabase/client'
+import { doc, getDoc, limit, updateDoc } from 'firebase/firestore'
+import { db, STORAGE_BUCKETS, storage } from '@lib/firebase/client'
+import { cacheProfile, nowIso, queryDocs } from '@lib/firebase/db'
 import { generateStoragePath } from '@lib/utils'
 import type { Profile } from '@/types'
 import type { ProfileFormData } from '@lib/validators'
 
+export function matchesProfile(profile: Profile, term: string): boolean {
+    const needle = term.trim().replace(/^@+/, '').toLowerCase()
+    if (!needle) return false
+    return (
+        (profile.display_name ?? '').toLowerCase().includes(needle) ||
+        (profile.username ?? '').toLowerCase().includes(needle)
+    )
+}
+
 export const profileService = {
-    /**
-     * Fetch a single profile by user ID.
-     */
     async getProfile(userId: string): Promise<Profile> {
-        const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userId)
-            .single()
-
-        if (error) throw error
-        return data as Profile
+        const snap = await getDoc(doc(db, 'profiles', userId))
+        if (!snap.exists()) throw new Error('Perfil no encontrado.')
+        const profile = { id: snap.id, ...snap.data() } as Profile
+        cacheProfile(profile)
+        return profile
     },
 
-    /**
-     * Update the current user's profile.
-     */
     async updateProfile(userId: string, updates: ProfileFormData): Promise<Profile> {
-        const { data, error } = await supabase
-            .from('profiles')
-            .update({
-                display_name: updates.display_name,
-                username: updates.username || null,
-                bio: updates.bio || null,
-                updated_at: new Date().toISOString(),
-            })
-            .eq('id', userId)
-            .select()
-            .single()
+        const username = updates.username?.trim() || null
+        if (username) {
+            const taken = (await queryDocs<Profile>('profiles', limit(500))).some(
+                (profile) => profile.id !== userId && profile.username?.toLowerCase() === username.toLowerCase()
+            )
+            if (taken) throw new Error('Ese nombre de usuario ya está cogido.')
+        }
 
-        if (error) throw error
-        return data as Profile
+        await updateDoc(doc(db, 'profiles', userId), {
+            display_name: updates.display_name,
+            username,
+            bio: updates.bio || null,
+            updated_at: nowIso(),
+        })
+        return this.getProfile(userId)
     },
 
-    /**
-     * Upload an avatar image and update the profile record.
-     * Returns the stable Storage path persisted in the profile.
-     */
+    /** Uploads an avatar to R2 and stores its path in the profile. */
     async uploadAvatar(userId: string, file: File): Promise<string> {
         const path = generateStoragePath('avatars', userId, file.name)
 
         const { error: uploadError } = await storage
             .from(STORAGE_BUCKETS.AVATARS)
-            .upload(path, file, {
-                cacheControl: '3600',
-                upsert: true,
-            })
+            .upload(path, file, { cacheControl: '3600', upsert: true, contentType: file.type || undefined })
+        if (uploadError) throw new Error(uploadError.message)
 
-        if (uploadError) throw uploadError
-
-        const { error: updateError } = await supabase
-            .from('profiles')
-            .update({ avatar_url: path, updated_at: new Date().toISOString() })
-            .eq('id', userId)
-
-        if (updateError) throw updateError
-
+        await updateDoc(doc(db, 'profiles', userId), { avatar_url: path, updated_at: nowIso() })
         return path
     },
 
-    /**
-     * Search profiles by display_name or username (for debt member selection, etc.)
-     */
+    /** Search by display_name or username (the app has few users, so it filters client-side). */
     async searchProfiles(query: string, excludeIds: string[] = []): Promise<Profile[]> {
-        let q = supabase
-            .from('profiles')
-            .select('*')
-            .or(`display_name.ilike.%${query}%,username.ilike.%${query}%`)
-            .limit(10)
-
-        if (excludeIds.length > 0) {
-            q = q.not('id', 'in', `(${excludeIds.join(',')})`)
-        }
-
-        const { data, error } = await q
-        if (error) throw error
-        return data as Profile[]
+        const profiles = await queryDocs<Profile>('profiles', limit(500))
+        return profiles
+            .filter((profile) => !excludeIds.includes(profile.id) && profile.is_approved !== false && matchesProfile(profile, query))
+            .slice(0, 10)
     },
 }

@@ -1,19 +1,17 @@
-import { supabase } from '@lib/supabase/client'
+import { deleteDoc, doc, setDoc } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { getById, nowIso } from '@lib/firebase/db'
 import type { SharedLink, SharedLinkResourceType, SharedLinkVisibility } from '@/types'
 
-/**
- * Generate a secure random token using the browser's crypto API.
- */
+/** Secure random token from the browser's crypto API. */
 function generateToken(): string {
     const arr = new Uint8Array(20)
     crypto.getRandomValues(arr)
     return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** `shared_links/{token}`: the token is the document id, so resolving it is a single read. */
 export const sharedLinksService = {
-    /**
-     * Create a shared link for a resource.
-     */
     async createLink(
         userId: string,
         resourceType: SharedLinkResourceType,
@@ -22,79 +20,31 @@ export const sharedLinksService = {
         expiresAt?: Date
     ): Promise<SharedLink> {
         const token = generateToken()
-
-        const { data, error } = await supabase
-            .from('shared_links')
-            .insert({
-                token,
-                resource_type: resourceType,
-                resource_id: resourceId,
-                created_by: userId,
-                visibility,
-                expires_at: expiresAt?.toISOString() ?? null,
-            })
-            .select()
-            .single()
-
-        if (error) throw error
-        return data as SharedLink
+        const data = {
+            token,
+            resource_type: resourceType,
+            resource_id: resourceId,
+            created_by: userId,
+            visibility,
+            expires_at: expiresAt?.toISOString() ?? null,
+            created_at: nowIso(),
+        }
+        await setDoc(doc(db, 'shared_links', token), data)
+        return { id: token, ...data }
     },
 
-    /**
-     * Resolve a shared link token. Returns the link record or null if invalid/expired.
-     */
+    /** The link record, or null if it is invalid or expired. */
     async resolveToken(token: string): Promise<SharedLink | null> {
-        const { data, error } = await supabase
-            .from('shared_links')
-            .select('*')
-            .eq('token', token)
-            .single()
-
-        if (error) return null
-
-        const link = data as SharedLink
-
-        // Check expiry
-        if (link.expires_at && new Date(link.expires_at) < new Date()) {
-            return null
-        }
-
+        const link = await getById<SharedLink>('shared_links', token).catch(() => null)
+        if (!link) return null
+        if (link.expires_at && new Date(link.expires_at) < new Date()) return null
         return link
     },
 
-    /**
-     * Delete a shared link.
-     */
     async deleteLink(linkId: string): Promise<void> {
-        const { error } = await supabase
-            .from('shared_links')
-            .delete()
-            .eq('id', linkId)
-
-        if (error) throw error
+        await deleteDoc(doc(db, 'shared_links', linkId))
     },
 
-    /**
-     * Get all shared links created by a user for a specific resource.
-     */
-    async getLinksForResource(
-        resourceId: string,
-        resourceType: SharedLinkResourceType
-    ): Promise<SharedLink[]> {
-        const { data, error } = await supabase
-            .from('shared_links')
-            .select('*')
-            .eq('resource_id', resourceId)
-            .eq('resource_type', resourceType)
-            .order('created_at', { ascending: false })
-
-        if (error) throw error
-        return data as SharedLink[]
-    },
-
-    /**
-     * Build the full shareable URL from a token.
-     */
     buildShareUrl(token: string): string {
         return `${window.location.origin}/shared/${token}`
     },

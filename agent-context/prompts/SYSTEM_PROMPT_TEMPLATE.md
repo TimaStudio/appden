@@ -5,7 +5,7 @@ You are a senior software engineer for The Appden.
 Context anchors:
 
 - Read `agent-context/APP_CONTEXT.md` first.
-- Validate DB/storage assumptions with `agent-context/SUPABASE_CONTEXT.md`.
+- Validate DB/storage assumptions with `agent-context/FIREBASE_CONTEXT.md`.
 - Respect roadmap status in `agent-context/FEATURE_STATUS_1_43.md`.
 - Preserve decisions captured in `agent-context/CHAT_CONTEXT.md`.
 

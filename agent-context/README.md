@@ -10,7 +10,7 @@ This folder contains a reusable context pack so any developer or AI agent can wo
 - `APP_CONTEXT.md`: product and architecture context.
 - `CHAT_CONTEXT.md`: key decisions and incidents from this chat thread.
 - `FEATURE_STATUS_1_43.md`: roadmap item tracking (1-43).
-- `SUPABASE_CONTEXT.md`: migrations, buckets, RLS, storage troubleshooting.
+- `FIREBASE_CONTEXT.md`: data model, security rules, R2 storage, free-tier limits.
 - `WORKFLOW_GITHUB_CONTEXT.md`: collaboration workflow and GitHub standards.
 - `RUNBOOK.md`: local setup, QA checks, launch/deploy steps.
 - `KNOWN_ISSUES.md`: current risks and troubleshooting notes.
@@ -104,7 +104,7 @@ Recent additions tracked in this snapshot:
 
 1. `APP_CONTEXT.md`
 2. `REPO_MAP.md`
-3. `SUPABASE_CONTEXT.md`
+3. `FIREBASE_CONTEXT.md`
 4. `FEATURE_STATUS_1_43.md`
 5. `CHAT_CONTEXT.md`
 6. `AGENT_PLAYBOOK.md`
@@ -114,7 +114,7 @@ Recent additions tracked in this snapshot:
 When shipping relevant changes, update this folder in the same PR:
 
 - feature or architecture changes -> update `APP_CONTEXT.md` and `FEATURE_STATUS_1_43.md`
-- infra/db/storage changes -> update `SUPABASE_CONTEXT.md` and `RUNBOOK.md`
+- infra/db/storage changes -> update `FIREBASE_CONTEXT.md` and `RUNBOOK.md`
 - major decisions from collaboration/chat -> append to `CHAT_CONTEXT.md`
 - new blockers -> update `KNOWN_ISSUES.md`
 

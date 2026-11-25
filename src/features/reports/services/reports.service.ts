@@ -1,15 +1,8 @@
-import { supabase, STORAGE_BUCKETS, storage } from '@lib/supabase/client'
-import { reportLocalFallback } from '@lib/diagnostics/fallback'
+import { addDoc, collection, doc, getCountFromServer, getDoc, query, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { db, STORAGE_BUCKETS, storage } from '@lib/firebase/client'
+import { fetchProfilesMap, miniProfile, nowIso, queryDocs } from '@lib/firebase/db'
 import { generateStoragePath } from '@lib/utils'
-import type {
-    ReportItem,
-    ReportNotification,
-    ReportSeverity,
-    ReportStatus,
-    ReportType,
-} from '@features/reports/types'
-
-const FALLBACK_STORAGE_KEY = 'appden:reports:fallback:v2'
+import type { ReportItem, ReportNotification, ReportSeverity, ReportStatus, ReportType } from '@features/reports/types'
 
 type CreateReportInput = {
     userId: string
@@ -30,241 +23,95 @@ type ListReportsFilters = {
     limit?: number
 }
 
+type ReportDoc = Omit<ReportItem, 'author'>
+
+const cleanText = (value: string | null | undefined, max: number) => (value?.trim() ? value.trim().slice(0, max) : null)
+
+async function withAuthors(reports: ReportDoc[]): Promise<ReportItem[]> {
+    const profiles = await fetchProfilesMap(reports.map((report) => report.user_id))
+    return reports.map((report) => ({ ...report, author: miniProfile(profiles.get(report.user_id)) as ReportItem['author'] }))
+}
+
+async function readReport(reportId: string): Promise<ReportItem> {
+    const snap = await getDoc(doc(db, 'reports', reportId))
+    if (!snap.exists()) throw new Error('Este reporte ya no existe.')
+    const [report] = await withAuthors([{ id: snap.id, ...snap.data() } as ReportDoc])
+    return report
+}
+
+/** App admins are `admins/{uid}` documents; each new report notifies them. */
+async function notifyAdmins(reportId: string): Promise<void> {
+    try {
+        const admins = await queryDocs<{ id: string }>('admins')
+        if (admins.length === 0) return
+        const batch = writeBatch(db)
+        for (const admin of admins) {
+            batch.set(doc(collection(db, 'report_notifications')), {
+                report_id: reportId,
+                admin_user_id: admin.id,
+                read: false,
+                read_at: null,
+                created_at: nowIso(),
+            })
+        }
+        await batch.commit()
+    } catch (error) {
+        console.warn('[Reports] No se pudo avisar a los administradores:', error)
+    }
+}
+
 export const reportsService = {
     async create(input: CreateReportInput): Promise<ReportItem> {
         let imageUrl: string | null = null
-
         if (input.imageFile) {
-            const path = generateStoragePath(
-                input.groupId ?? 'global',
-                input.userId,
-                input.imageFile.name
-            )
-            imageUrl = await uploadReportImage(path, input.imageFile)
+            const path = generateStoragePath(input.groupId ?? 'global', input.userId, input.imageFile.name)
+            const { error } = await storage
+                .from(STORAGE_BUCKETS.REPORTS)
+                .upload(path, input.imageFile, { cacheControl: '3600', upsert: false, contentType: input.imageFile.type || undefined })
+            if (!error) imageUrl = `${STORAGE_BUCKETS.REPORTS}/${path}`
         }
 
-        const payload = {
+        const now = nowIso()
+        const steps = cleanText(input.reproductionSteps, 3000)
+        const data = {
             group_id: input.groupId ?? null,
             user_id: input.userId,
             type: input.type,
             title: input.title.trim().slice(0, 140),
             description: input.description.trim().slice(0, 3000),
-            reproduction_steps: input.reproductionSteps?.trim()
-                ? input.reproductionSteps.trim().slice(0, 3000)
-                : null,
-            // Backward compatibility while old column still exists.
-            steps: input.reproductionSteps?.trim()
-                ? input.reproductionSteps.trim().slice(0, 3000)
-                : null,
+            reproduction_steps: steps,
+            steps,
             severity: input.severity ?? null,
             image_url: imageUrl,
-            status: 'open' as const,
+            status: 'open' as ReportStatus,
+            created_at: now,
+            updated_at: now,
         }
-
-        const { data, error } = await supabase
-            .from('reports')
-            .insert(payload)
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .single()
-
-        if (!error) {
-            return mapReportRow(data)
-        }
-
-        if (isMissingRelationError(error)) {
-            reportLocalFallback('reports', error)
-            return writeFallback(payload)
-        }
-
-        if (isLegacyReportsSchemaError(error)) {
-            return this.createLegacy(input, imageUrl)
-        }
-
-        throw error
-    },
-
-    async createLegacy(input: CreateReportInput, imageUrl: string | null): Promise<ReportItem> {
-        if (!input.groupId) {
-            return writeFallback({
-                group_id: null,
-                user_id: input.userId,
-                type: normalizeLegacyReportType(input.type),
-                title: input.title.trim().slice(0, 140),
-                description: input.description.trim().slice(0, 3000),
-                reproduction_steps: input.reproductionSteps?.trim()
-                    ? input.reproductionSteps.trim().slice(0, 3000)
-                    : null,
-                steps: input.reproductionSteps?.trim()
-                    ? input.reproductionSteps.trim().slice(0, 3000)
-                    : null,
-                severity: input.severity ?? null,
-                image_url: imageUrl,
-                status: 'open',
-            })
-        }
-
-        const legacyPayload = {
-            group_id: input.groupId,
-            user_id: input.userId,
-            type: normalizeLegacyReportType(input.type),
-            description: input.description.trim().slice(0, 3000),
-            steps: input.reproductionSteps?.trim()
-                ? input.reproductionSteps.trim().slice(0, 3000)
-                : null,
-            image_url: imageUrl,
-            status: 'open' as const,
-        }
-
-        const { data, error } = await supabase
-            .from('reports')
-            .insert(legacyPayload)
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error) || isLegacyReportsSchemaError(error)) {
-                reportLocalFallback('reports', error)
-                return writeFallback({
-                    group_id: input.groupId,
-                    user_id: input.userId,
-                    type: normalizeLegacyReportType(input.type),
-                    title: input.title.trim().slice(0, 140),
-                    description: input.description.trim().slice(0, 3000),
-                    reproduction_steps: input.reproductionSteps?.trim()
-                        ? input.reproductionSteps.trim().slice(0, 3000)
-                        : null,
-                    steps: input.reproductionSteps?.trim()
-                        ? input.reproductionSteps.trim().slice(0, 3000)
-                        : null,
-                    severity: input.severity ?? null,
-                    image_url: imageUrl,
-                    status: 'open',
-                })
-            }
-            throw error
-        }
-
-        return mapReportRow(data, input.title)
+        const ref = await addDoc(collection(db, 'reports'), data)
+        await notifyAdmins(ref.id)
+        const [report] = await withAuthors([{ id: ref.id, ...data }])
+        return report
     },
 
     async list(filters: ListReportsFilters = {}): Promise<ReportItem[]> {
-        const fallback = readFallback()
-        let query = supabase
-            .from('reports')
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .order('created_at', { ascending: false })
-            .limit(filters.limit ?? 50)
-
-        if (filters.groupId) {
-            query = query.eq('group_id', filters.groupId)
-        }
-
-        if (filters.status && filters.status !== 'all') {
-            query = query.eq('status', filters.status)
-        }
-
-        if (filters.type && filters.type !== 'all') {
-            query = query.eq('type', filters.type)
-        }
-
-        if (filters.search?.trim()) {
-            const search = filters.search.trim()
-            query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`)
-        }
-
-        const { data, error } = await query
-
-        if (!error) {
-            return ((data ?? []) as unknown[]).map((row) => mapReportRow(row))
-        }
-
-        if (isLegacyReportsSchemaError(error)) {
-            return this.listLegacy(filters, fallback)
-        }
-
-        if (isMissingRelationError(error)) {
-            reportLocalFallback('reports', error)
-            return filterFallbackReports(fallback, filters)
-        }
-
-        throw error
-    },
-
-    async listLegacy(filters: ListReportsFilters, fallback: ReportItem[]): Promise<ReportItem[]> {
-        let query = supabase
-            .from('reports')
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .order('created_at', { ascending: false })
-            .limit(filters.limit ?? 50)
-
-        if (filters.groupId) {
-            query = query.eq('group_id', filters.groupId)
-        }
-
-        if (filters.status && filters.status !== 'all') {
-            query = query.eq('status', filters.status)
-        }
-
-        if (filters.type && filters.type !== 'all') {
-            query = query.eq('type', normalizeLegacyReportType(filters.type))
-        }
-
-        const { data, error } = await query
-
-        if (error) {
-            if (isMissingRelationError(error) || isLegacyReportsSchemaError(error)) {
-                return filterFallbackReports(fallback, filters)
-            }
-            throw error
-        }
-
-        const mapped = ((data ?? []) as unknown[]).map((row) => mapReportRow(row))
-        return filterFallbackReports(mapped, filters)
+        const rows = await queryDocs<ReportDoc>('reports', ...(filters.groupId ? [where('group_id', '==', filters.groupId)] : []))
+        const search = filters.search?.trim().toLowerCase() ?? ''
+        const filtered = rows
+            .filter((row) => !filters.status || filters.status === 'all' || row.status === filters.status)
+            .filter((row) => !filters.type || filters.type === 'all' || row.type === filters.type)
+            .filter((row) => !search || row.title.toLowerCase().includes(search) || row.description.toLowerCase().includes(search))
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+            .slice(0, filters.limit ?? 50)
+        return withAuthors(filtered)
     },
 
     async getById(reportId: string): Promise<ReportItem | null> {
-        const fallback = readFallback().find((item) => item.id === reportId) ?? null
-
-        const { data, error } = await supabase
-            .from('reports')
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .eq('id', reportId)
-            .maybeSingle()
-
-        if (!error) {
-            return data ? mapReportRow(data) : fallback
-        }
-
-        if (isMissingRelationError(error) || isLegacyReportsSchemaError(error)) {
-            reportLocalFallback('reports', error)
-            return fallback
-        }
-        throw error
+        return readReport(reportId).catch(() => null)
     },
 
     async updateStatus(reportId: string, status: ReportStatus): Promise<ReportItem> {
-        const { data, error } = await supabase
-            .from('reports')
-            .update({ status, updated_at: new Date().toISOString() })
-            .eq('id', reportId)
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .single()
-
-        if (!error) return mapReportRow(data)
-
-        if (isLegacyReportsSchemaError(error)) {
-            const { data: legacyData, error: legacyError } = await supabase
-                .from('reports')
-                .update({ status })
-                .eq('id', reportId)
-                .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-                .single()
-
-            if (legacyError) throw legacyError
-            return mapReportRow(legacyData)
-        }
-
-        throw error
+        await updateDoc(doc(db, 'reports', reportId), { status, updated_at: nowIso() })
+        return readReport(reportId)
     },
 
     async updateContent(
@@ -277,272 +124,40 @@ export const reportsService = {
             type?: ReportType
         }
     ): Promise<ReportItem> {
-        const payload = {
+        const steps = patch.reproductionSteps !== undefined ? cleanText(patch.reproductionSteps, 3000) : undefined
+        await updateDoc(doc(db, 'reports', reportId), {
             ...(patch.title ? { title: patch.title.trim().slice(0, 140) } : {}),
             ...(patch.description ? { description: patch.description.trim().slice(0, 3000) } : {}),
-            ...(patch.reproductionSteps !== undefined ? {
-                reproduction_steps: patch.reproductionSteps?.trim()
-                    ? patch.reproductionSteps.trim().slice(0, 3000)
-                    : null,
-                steps: patch.reproductionSteps?.trim()
-                    ? patch.reproductionSteps.trim().slice(0, 3000)
-                    : null,
-            } : {}),
+            ...(steps !== undefined ? { reproduction_steps: steps, steps } : {}),
             ...(patch.severity !== undefined ? { severity: patch.severity } : {}),
             ...(patch.type ? { type: patch.type } : {}),
-            updated_at: new Date().toISOString(),
-        }
-
-        const { data, error } = await supabase
-            .from('reports')
-            .update(payload)
-            .eq('id', reportId)
-            .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-            .single()
-
-        if (!error) return mapReportRow(data)
-
-        if (isLegacyReportsSchemaError(error)) {
-            const legacyPayload = {
-                ...(patch.description ? { description: patch.description.trim().slice(0, 3000) } : {}),
-                ...(patch.reproductionSteps !== undefined
-                    ? {
-                        steps: patch.reproductionSteps?.trim()
-                            ? patch.reproductionSteps.trim().slice(0, 3000)
-                            : null,
-                    }
-                    : {}),
-                ...(patch.type ? { type: normalizeLegacyReportType(patch.type) } : {}),
-            }
-
-            const { data: legacyData, error: legacyError } = await supabase
-                .from('reports')
-                .update(legacyPayload)
-                .eq('id', reportId)
-                .select('*, author:profiles!reports_user_id_fkey(id, display_name, username, avatar_url)')
-                .single()
-
-            if (legacyError) throw legacyError
-            return mapReportRow(legacyData, patch.title)
-        }
-
-        throw error
+            updated_at: nowIso(),
+        })
+        return readReport(reportId)
     },
 
     async getViewerAccess(userId: string): Promise<{ isAdmin: boolean }> {
-        const { data, error } = await supabase.rpc('is_app_admin', { p_user_id: userId })
-        if (error) return { isAdmin: false }
-        return { isAdmin: !!data }
+        const snap = await getDoc(doc(db, 'admins', userId)).catch(() => null)
+        return { isAdmin: !!snap?.exists() }
     },
 
     async listMyAdminNotifications(userId: string): Promise<ReportNotification[]> {
-        const { data, error } = await supabase
-            .from('report_notifications')
-            .select('*')
-            .eq('admin_user_id', userId)
-            .order('created_at', { ascending: false })
-
-        if (error) {
-            if (isMissingRelationError(error)) return []
-            throw error
-        }
-
-        return (data ?? []) as ReportNotification[]
+        const rows = await queryDocs<ReportNotification>('report_notifications', where('admin_user_id', '==', userId))
+        return rows.sort((a, b) => b.created_at.localeCompare(a.created_at))
     },
 
     async getUnreadAdminNotificationsCount(userId: string): Promise<number> {
-        const { count, error } = await supabase
-            .from('report_notifications')
-            .select('id', { count: 'exact', head: true })
-            .eq('admin_user_id', userId)
-            .eq('read', false)
-
-        if (error) {
-            if (isMissingRelationError(error)) return 0
-            throw error
-        }
-
-        return count ?? 0
+        const snap = await getCountFromServer(
+            query(collection(db, 'report_notifications'), where('admin_user_id', '==', userId), where('read', '==', false))
+        )
+        return snap.data().count
     },
 
     async markAllAdminNotificationsRead(userId: string): Promise<void> {
-        const { error } = await supabase
-            .from('report_notifications')
-            .update({ read: true, read_at: new Date().toISOString() })
-            .eq('admin_user_id', userId)
-            .eq('read', false)
-
-        if (error && !isMissingRelationError(error)) throw error
+        const unread = await queryDocs<ReportNotification>('report_notifications', where('admin_user_id', '==', userId), where('read', '==', false))
+        if (unread.length === 0) return
+        const batch = writeBatch(db)
+        for (const item of unread) batch.update(doc(db, 'report_notifications', item.id), { read: true, read_at: nowIso() })
+        await batch.commit()
     },
-}
-
-async function uploadReportImage(path: string, imageFile: File): Promise<string | null> {
-    const preferredBucket = STORAGE_BUCKETS.REPORTS
-    const fallbackBucket = STORAGE_BUCKETS.FILES
-
-    const tryUpload = async (bucket: string): Promise<string | null> => {
-        const { error } = await storage
-            .from(bucket)
-            .upload(path, imageFile, { cacheControl: '3600', upsert: false })
-
-        if (error) return null
-        return `${bucket}/${path}`
-    }
-
-    const uploadedPreferred = await tryUpload(preferredBucket)
-    if (uploadedPreferred) return uploadedPreferred
-
-    return tryUpload(fallbackBucket)
-}
-
-function readFallback(): ReportItem[] {
-    if (typeof window === 'undefined') return []
-
-    try {
-        const raw = window.localStorage.getItem(FALLBACK_STORAGE_KEY)
-        if (!raw) return []
-        return JSON.parse(raw) as ReportItem[]
-    } catch {
-        return []
-    }
-}
-
-function writeFallback(payload: {
-    group_id: string | null
-    user_id: string
-    type: ReportType
-    title: string
-    description: string
-    reproduction_steps: string | null
-    steps: string | null
-    severity: ReportSeverity | null
-    image_url: string | null
-    status: 'open'
-}): ReportItem {
-    const current = readFallback()
-    const now = new Date().toISOString()
-    const item: ReportItem = {
-        id: crypto.randomUUID(),
-        group_id: payload.group_id,
-        user_id: payload.user_id,
-        type: payload.type,
-        title: payload.title,
-        description: payload.description,
-        reproduction_steps: payload.reproduction_steps,
-        steps: payload.steps,
-        severity: payload.severity,
-        image_url: payload.image_url,
-        status: payload.status,
-        created_at: now,
-        updated_at: now,
-    }
-
-    const next = [item, ...current].slice(0, 300)
-    if (typeof window !== 'undefined') {
-        try {
-            window.localStorage.setItem(FALLBACK_STORAGE_KEY, JSON.stringify(next))
-        } catch {
-            // Ignore quota limits.
-        }
-    }
-
-    return item
-}
-
-function isMissingRelationError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''}`.toLowerCase()
-    return raw.includes('42p01') || raw.includes('pgrst205') || raw.includes('does not exist')
-}
-
-function isLegacyReportsSchemaError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string; hint?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''} ${anyError.hint ?? ''}`.toLowerCase()
-    return (
-        raw.includes('42703') ||
-        raw.includes('pgrst204') ||
-        raw.includes('column') ||
-        raw.includes('reproduction_steps') ||
-        raw.includes('severity') ||
-        raw.includes('title') ||
-        raw.includes('updated_at') ||
-        raw.includes('not-null') ||
-        raw.includes('null value in column "group_id"')
-    )
-}
-
-function normalizeLegacyReportType(type: ReportType): 'bug' | 'improvement' {
-    if (type === 'improvement') return 'improvement'
-    return 'bug'
-}
-
-function mapReportRow(row: unknown, fallbackTitle?: string): ReportItem {
-    const item = (row ?? {}) as Record<string, unknown>
-    const createdAt = String(item.created_at ?? new Date().toISOString())
-
-    return {
-        id: String(item.id ?? crypto.randomUUID()),
-        group_id: item.group_id ? String(item.group_id) : null,
-        user_id: String(item.user_id ?? ''),
-        type: normalizeReadReportType(item.type),
-        title:
-            typeof item.title === 'string' && item.title.trim()
-                ? item.title
-                : fallbackTitle?.trim()
-                    ? fallbackTitle.trim()
-                    : String(item.description ?? 'Reporte').slice(0, 100),
-        description: String(item.description ?? ''),
-        reproduction_steps:
-            typeof item.reproduction_steps === 'string'
-                ? item.reproduction_steps
-                : typeof item.steps === 'string'
-                    ? item.steps
-                    : null,
-        steps: typeof item.steps === 'string' ? item.steps : null,
-        severity: normalizeSeverity(item.severity),
-        image_url: typeof item.image_url === 'string' ? item.image_url : null,
-        status: normalizeStatus(item.status),
-        created_at: createdAt,
-        updated_at: String(item.updated_at ?? createdAt),
-        author: item.author as ReportItem['author'],
-    }
-}
-
-function normalizeReadReportType(type: unknown): ReportType {
-    if (type === 'improvement') return 'improvement'
-    if (type === 'error') return 'error'
-    return 'bug'
-}
-
-function normalizeSeverity(value: unknown): ReportSeverity | null {
-    if (value === 'low' || value === 'medium' || value === 'high' || value === 'critical') {
-        return value
-    }
-    return null
-}
-
-function normalizeStatus(value: unknown): ReportStatus {
-    if (value === 'in_review' || value === 'resolved' || value === 'closed') {
-        return value
-    }
-    return 'open'
-}
-
-function filterFallbackReports(reports: ReportItem[], filters: ListReportsFilters): ReportItem[] {
-    const search = filters.search?.trim().toLowerCase() ?? ''
-
-    return reports
-        .filter((row) => !filters.groupId || row.group_id === filters.groupId)
-        .filter((row) => !filters.status || filters.status === 'all' || row.status === filters.status)
-        .filter((row) => !filters.type || filters.type === 'all' || row.type === filters.type)
-        .filter((row) => {
-            if (!search) return true
-            return (
-                row.title.toLowerCase().includes(search) ||
-                row.description.toLowerCase().includes(search)
-            )
-        })
-        .slice(0, filters.limit ?? 50)
 }

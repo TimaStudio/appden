@@ -8,7 +8,7 @@ Ship stable features fast without regressing:
 
 - auth/session stability
 - player controls and playback continuity
-- Supabase schema + RLS safety
+- Firestore data model + security rules safety
 - mobile usability
 
 ## Non-negotiables
@@ -23,7 +23,7 @@ Ship stable features fast without regressing:
 
 1. Read:
    - `APP_CONTEXT.md`
-   - `SUPABASE_CONTEXT.md`
+   - `FIREBASE_CONTEXT.md`
    - target module files
 2. Validate assumptions by reading source code (not only docs).
 3. Implement smallest coherent slice end-to-end.
@@ -43,9 +43,9 @@ Ship stable features fast without regressing:
 ## High-risk zones
 
 - `src/services/songs.service.ts` (upload/signing/storage path assumptions)
-- `src/lib/supabase/client.ts` (auth storage key and signed URL normalization)
+- `src/lib/firebase/client.ts` (Firebase app and R2 signed URL cache)
 - `src/features/player/player.engine.ts` (audio state transitions)
-- Supabase SQL migrations and storage policies
+- `firestore.rules` and the R2 Worker (`r2-worker/`)
 
 ## Quick verification scripts
 
@@ -71,7 +71,7 @@ Preferred ownership split:
 - dev A: player/audio and UI controls
 - dev B: lyrics/social
 - dev C: debt pro + admin
-- dev D: infra/docs/QA + Supabase migration hygiene
+- dev D: infra/docs/QA + Firestore rules hygiene
 
 Merge policy:
 

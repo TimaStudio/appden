@@ -1,5 +1,8 @@
 # Known Issues and Risks
 
+> Historical note: written while the app ran on Supabase. Since 2026-11-25 the app uses
+> Firebase (Auth + Firestore) and Cloudflare R2; see `agent-context/FIREBASE_CONTEXT.md`.
+
 ## 1) Login/social bootstrap can fail if migrations 010 and 011 are not applied
 
 Symptom:

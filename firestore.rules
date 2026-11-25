@@ -1,0 +1,328 @@
+rules_version = '2';
+
+// The Appden: replaces the Supabase row-level security.
+// Group-scoped documents carry `group_id`; membership is `group_members/{groupId}_{userId}`.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function path(collectionName, id) { return /databases/$(database)/documents/$(collectionName)/$(id); }
+
+    function isAdmin() { return signedIn() && exists(path('admins', uid())); }
+    function memberDoc(groupId) { return path('group_members', groupId + '_' + uid()); }
+    function isMember(groupId) { return signedIn() && groupId is string && exists(memberDoc(groupId)); }
+    function role(groupId) { return get(memberDoc(groupId)).data.role; }
+    function isManager(groupId) { return isMember(groupId) && role(groupId) in ['owner', 'admin']; }
+    function groupOf(groupId) { return get(path('groups', groupId)).data; }
+
+    function incoming() { return request.resource.data; }
+    function onlyChanged(keys) { return incoming().diff(resource.data).affectedKeys().hasOnly(keys); }
+    function unchanged(key) { return incoming().get(key, null) == resource.data.get(key, null); }
+
+    // ---------------------------------------------------------------- people
+    match /profiles/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && uid() == userId && incoming().is_approved == false;
+      allow update: if (signedIn() && uid() == userId && unchanged('is_approved'))
+                    || (isAdmin() && onlyChanged(['is_approved', 'updated_at']));
+    }
+
+    match /admins/{userId} {
+      allow read: if signedIn();
+    }
+
+    match /account_requests/{userId} {
+      allow read: if signedIn() && (uid() == userId || isAdmin());
+      allow create: if signedIn() && uid() == userId && incoming().profile_id == userId && incoming().status == 'pending';
+      allow update: if isAdmin();
+    }
+
+    match /friend_requests/{requestId} {
+      allow read: if resource == null || (signedIn() && uid() in [resource.data.from_user_id, resource.data.to_user_id]);
+      allow create: if signedIn() && incoming().from_user_id == uid() && incoming().status == 'pending'
+                    && requestId == uid() + '_' + incoming().to_user_id;
+      allow update: if signedIn() && (
+                      (resource.data.to_user_id == uid() && resource.data.status == 'pending'
+                        && incoming().status in ['accepted', 'rejected'] && onlyChanged(['status', 'responded_at']))
+                      || (resource.data.from_user_id == uid() && incoming().from_user_id == uid()
+                        && incoming().to_user_id == resource.data.to_user_id && incoming().status == 'pending'));
+      allow delete: if signedIn() && uid() in [resource.data.from_user_id, resource.data.to_user_id];
+    }
+
+    match /friendships/{friendshipId} {
+      allow read: if resource == null || (signedIn() && uid() in resource.data.participants);
+      // Created by whoever accepts a pending request from the other person.
+      allow create: if signedIn()
+                    && friendshipId == incoming().user_a + '_' + incoming().user_b
+                    && incoming().user_a < incoming().user_b
+                    && incoming().participants == [incoming().user_a, incoming().user_b]
+                    && uid() in incoming().participants
+                    && get(path('friend_requests', (uid() == incoming().user_a ? incoming().user_b : incoming().user_a) + '_' + uid())).data.status == 'pending';
+      allow delete: if signedIn() && uid() in resource.data.participants;
+    }
+
+    match /notifications/{notificationId} {
+      allow read, delete: if signedIn() && resource.data.user_id == uid();
+      allow update: if signedIn() && resource.data.user_id == uid() && onlyChanged(['read']);
+      allow create: if signedIn() && incoming().actor_id == uid() && incoming().read == false;
+    }
+
+    match /posts/{postId} {
+      allow read: if signedIn() && (
+                    resource.data.visibility == 'public'
+                    || resource.data.user_id == uid()
+                    || (resource.data.visibility == 'group' && isMember(resource.data.group_id)));
+      allow create: if signedIn() && incoming().user_id == uid() && incoming().like_user_ids == []
+                    && (incoming().visibility != 'group' || isMember(incoming().group_id));
+      allow update: if signedIn() && (
+                      (resource.data.user_id == uid() && unchanged('user_id'))
+                      || (onlyChanged(['like_user_ids'])
+                        && incoming().like_user_ids.toSet().difference(resource.data.like_user_ids.toSet())
+                             .union(resource.data.like_user_ids.toSet().difference(incoming().like_user_ids.toSet()))
+                             .hasOnly([uid()])));
+      allow delete: if signedIn() && resource.data.user_id == uid();
+    }
+
+    // ---------------------------------------------------------------- groups
+    match /groups/{groupId} {
+      allow read: if signedIn() && (uid() in resource.data.member_ids
+                    || exists(path('group_invitations', groupId + '_' + uid())));
+      allow create: if signedIn() && incoming().created_by == uid() && incoming().member_ids == [uid()];
+      allow update: if signedIn() && unchanged('created_by') && (
+                      isManager(groupId)
+                      // Joining (invite link or accepted invitation): add only yourself, with your membership.
+                      || (onlyChanged(['member_ids', 'updated_at'])
+                        && incoming().member_ids.toSet().difference(resource.data.member_ids.toSet()).hasOnly([uid()])
+                        && resource.data.member_ids.toSet().difference(incoming().member_ids.toSet()).size() == 0
+                        && existsAfter(memberDoc(groupId)))
+                      // Leaving: remove only yourself (the owner cannot leave).
+                      || (onlyChanged(['member_ids', 'updated_at'])
+                        && resource.data.created_by != uid()
+                        && resource.data.member_ids.toSet().difference(incoming().member_ids.toSet()).hasOnly([uid()])
+                        && incoming().member_ids.toSet().difference(resource.data.member_ids.toSet()).size() == 0
+                        && !existsAfter(memberDoc(groupId))));
+      allow delete: if signedIn() && resource.data.created_by == uid();
+    }
+
+    match /group_members/{memberId} {
+      allow read: if resource == null || (signedIn() && (resource.data.user_id == uid() || isMember(resource.data.group_id)));
+      allow create: if signedIn()
+                    && memberId == incoming().group_id + '_' + incoming().user_id
+                    && (
+                      (isManager(incoming().group_id) && incoming().role in ['member', 'admin'])
+                      || (incoming().user_id == uid() && incoming().role == 'member' && (
+                           (incoming().get('invite_token', null) is string
+                             && get(path('group_invite_tokens', incoming().invite_token)).data.group_id == incoming().group_id
+                             && get(path('group_invite_tokens', incoming().invite_token)).data.expires_at_ms > request.time.toMillis())
+                           || get(path('group_invitations', incoming().group_id + '_' + uid())).data.status == 'pending'))
+                      // Owner membership created together with the group.
+                      || (incoming().user_id == uid() && incoming().role == 'owner'
+                           && !exists(path('groups', incoming().group_id))
+                           && getAfter(path('groups', incoming().group_id)).data.created_by == uid()));
+      allow update: if isManager(resource.data.group_id) && resource.data.role != 'owner'
+                    && incoming().role in ['member', 'admin'] && onlyChanged(['role']);
+      allow delete: if signedIn() && (
+                      (isManager(resource.data.group_id) && resource.data.role != 'owner')
+                      || (resource.data.user_id == uid() && resource.data.role != 'owner')
+                      // The owner's own membership goes away with the group.
+                      || (resource.data.user_id == uid() && !existsAfter(path('groups', resource.data.group_id))));
+    }
+
+    match /group_invite_tokens/{token} {
+      allow get: if signedIn();
+      allow create: if isManager(incoming().group_id) && incoming().created_by == uid();
+      allow delete: if isManager(resource.data.group_id);
+    }
+
+    match /group_invitations/{invitationId} {
+      allow read: if resource == null || (signedIn() && (resource.data.invited_user_id == uid() || isMember(resource.data.group_id)));
+      allow create: if isManager(incoming().group_id) && incoming().invited_by == uid() && incoming().status == 'pending'
+                    && invitationId == incoming().group_id + '_' + incoming().invited_user_id;
+      allow update: if signedIn() && (
+                      (isManager(resource.data.group_id) && unchanged('group_id') && unchanged('invited_user_id'))
+                      || (resource.data.invited_by == uid() && incoming().status == 'cancelled' && onlyChanged(['status', 'responded_at']))
+                      || (resource.data.invited_user_id == uid() && resource.data.status == 'pending'
+                        && incoming().status in ['accepted', 'rejected'] && onlyChanged(['status', 'responded_at'])));
+    }
+
+    match /group_activity/{activityId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().actor_id == uid();
+    }
+
+    // ---------------------------------------------------------------- debts
+    match /debts/{debtId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().created_by == uid()
+                    && incoming().creditor_id != incoming().debtor_id
+                    && groupOf(incoming().group_id).member_ids.hasAll([incoming().creditor_id, incoming().debtor_id]);
+      allow update: if isMember(resource.data.group_id)
+                    && uid() in [resource.data.creditor_id, resource.data.debtor_id, resource.data.get('created_by', '')]
+                    && unchanged('group_id') && unchanged('creditor_id') && unchanged('debtor_id')
+                    && incoming().amount_paid <= incoming().amount;
+      allow delete: if isMember(resource.data.group_id)
+                    && uid() in [resource.data.creditor_id, resource.data.get('created_by', '')];
+    }
+
+    match /debt_payments/{paymentId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().recorded_by == uid();
+      allow delete: if isMember(resource.data.group_id) && resource.data.get('recorded_by', '') == uid();
+    }
+
+    match /debt_reminders/{debtId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow delete: if isMember(resource.data.group_id);
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id');
+      allow create: if isMember(incoming().group_id);
+    }
+
+    match /debt_installments/{installmentId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow delete: if isMember(resource.data.group_id);
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id');
+      allow create: if isMember(incoming().group_id);
+    }
+
+    match /group_goals/{goalId} {
+      allow read, delete: if isMember(resource.data.group_id);
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id');
+      allow create: if isMember(incoming().group_id) && incoming().created_by == uid();
+    }
+
+    match /user_badges/{badgeId} {
+      allow read, delete: if isMember(resource.data.group_id);
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id');
+      allow create: if isMember(incoming().group_id);
+    }
+
+    match /group_member_permissions/{permissionId} {
+      allow read: if isMember(resource.data.group_id);
+      allow update: if isManager(resource.data.group_id) && unchanged('group_id');
+      allow create: if isManager(incoming().group_id);
+    }
+
+    // ---------------------------------------------------------------- music
+    match /songs/{songId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().uploaded_by == uid();
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id') && unchanged('uploaded_by') && (
+                      uid() == resource.data.uploaded_by
+                      || uid() in resource.data.get('editor_ids', [])
+                      || onlyChanged(['album_name']));
+      allow delete: if isMember(resource.data.group_id) && resource.data.uploaded_by == uid();
+    }
+
+    match /albums/{albumId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().created_by == uid();
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id')
+                    && (resource.data.created_by == uid() || isManager(resource.data.group_id));
+    }
+
+    match /song_comments/{commentId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().user_id == uid();
+      allow update: if isMember(resource.data.group_id) && resource.data.user_id == uid() && onlyChanged(['body', 'updated_at']);
+      allow delete: if isMember(resource.data.group_id) && resource.data.user_id == uid();
+    }
+
+    match /song_likes/{likeId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow create: if isMember(incoming().group_id) && incoming().user_id == uid();
+      allow delete: if signedIn() && resource.data.user_id == uid();
+    }
+
+    match /song_reactions/{reactionId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow create, update: if isMember(incoming().group_id) && incoming().user_id == uid();
+      allow delete: if signedIn() && resource.data.user_id == uid();
+    }
+
+    match /song_comment_likes/{likeId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow create: if isMember(incoming().group_id) && incoming().user_id == uid();
+      allow delete: if signedIn() && resource.data.user_id == uid();
+    }
+
+    match /song_lyrics/{songId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow create: if isMember(incoming().group_id);
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id');
+    }
+
+    match /song_lyrics_versions/{versionId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().created_by == uid();
+    }
+
+    match /song_lyrics_proposals/{proposalId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().proposed_by == uid();
+      allow update: if isMember(resource.data.group_id) && onlyChanged(['status', 'reviewed_by', 'reviewed_at']);
+    }
+
+    match /song_lyrics_translations/{translationId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow create: if isMember(incoming().group_id);
+      allow update: if isMember(resource.data.group_id) && unchanged('group_id');
+    }
+
+    match /favorites/{favoriteId} {
+      allow read: if resource == null || (signedIn() && resource.data.user_id == uid());
+      allow delete: if signedIn() && resource.data.user_id == uid();
+      allow create, update: if signedIn() && incoming().user_id == uid() && favoriteId == uid() + '_' + incoming().song_id;
+    }
+
+    match /playlists/{playlistId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().created_by == uid();
+      allow update: if isMember(resource.data.group_id) && resource.data.created_by == uid()
+                    && unchanged('group_id') && unchanged('created_by');
+      allow delete: if isMember(resource.data.group_id) && resource.data.created_by == uid();
+    }
+
+    match /playlist_songs/{entryId} {
+      allow read: if resource == null || (isMember(resource.data.group_id));
+      allow create: if isMember(incoming().group_id) && incoming().added_by == uid()
+                    && entryId == incoming().playlist_id + '_' + incoming().song_id;
+      allow update: if isMember(resource.data.group_id) && onlyChanged(['position']);
+      allow delete: if isMember(resource.data.group_id) && (
+                      resource.data.added_by == uid()
+                      || !exists(path('playlists', resource.data.playlist_id))
+                      || get(path('playlists', resource.data.playlist_id)).data.created_by == uid());
+    }
+
+    match /files/{fileId} {
+      allow read: if isMember(resource.data.group_id);
+      allow create: if isMember(incoming().group_id) && incoming().uploaded_by == uid();
+      allow delete: if isMember(resource.data.group_id) && (resource.data.uploaded_by == uid() || isManager(resource.data.group_id));
+    }
+
+    match /shared_links/{token} {
+      allow get: if signedIn();
+      allow create: if signedIn() && incoming().created_by == uid() && incoming().token == token;
+      allow delete: if signedIn() && resource.data.created_by == uid();
+    }
+
+    // ---------------------------------------------------------------- app
+    match /reports/{reportId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && incoming().user_id == uid()
+                    && (incoming().group_id == null || isMember(incoming().group_id));
+      allow update: if signedIn() && (resource.data.user_id == uid() || isAdmin()) && unchanged('user_id');
+      allow delete: if signedIn() && (resource.data.user_id == uid() || isAdmin());
+    }
+
+    match /report_notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.admin_user_id == uid();
+      allow update: if signedIn() && resource.data.admin_user_id == uid() && onlyChanged(['read', 'read_at']);
+      allow create: if signedIn() && exists(path('reports', incoming().report_id));
+    }
+
+    match /changelog_entries/{entryId} {
+      allow read: if signedIn();
+    }
+  }
+}

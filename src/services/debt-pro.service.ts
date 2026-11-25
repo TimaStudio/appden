@@ -1,31 +1,24 @@
-import { supabase } from '@lib/supabase/client'
-import { reportLocalFallback } from '@lib/diagnostics/fallback'
+import { addDoc, collection, doc, getDoc, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { getById, nowIso, queryDocs } from '@lib/firebase/db'
 import { buildWhatsAppUrl, formatMoney } from '@lib/utils'
 import { amountToCents, centsToAmount, settleOpenDebts } from '@features/debts/split'
 import type {
     Debt,
     DebtCurrency,
     DebtInstallment,
+    DebtPayment,
     DebtReminder,
     DebtReminderFrequency,
     GroupFinancialHealth,
     GroupGoal,
     GroupGoalStatus,
     GroupGoalType,
-    GroupMember,
     GroupMemberPermission,
     GroupSettlementTransfer,
     MonthlyDebtSummary,
     UserBadge,
 } from '@/types'
-
-const STORAGE_KEYS = {
-    reminders: 'appden:debt-reminders:v1',
-    installments: 'appden:debt-installments:v1',
-    goals: 'appden:debt-goals:v1',
-    badges: 'appden:debt-badges:v1',
-    permissions: 'appden:group-permissions:v1',
-} as const
 
 type ReminderChannels = {
     push: boolean
@@ -70,6 +63,10 @@ type PermissionInput = {
     canManageMembers: boolean
 }
 
+type InstallmentDoc = DebtInstallment & { group_id: string }
+
+const groupDebts = (groupId: string) => queryDocs<Debt>('debts', where('group_id', '==', groupId))
+
 export const debtProService = {
     /** Friendly reminder text for WhatsApp ("Hola Marcos, ..."). */
     buildReminderText(debt: Pick<Debt, 'concept' | 'amount' | 'amount_paid' | 'currency'>, debtorName: string): string {
@@ -79,25 +76,14 @@ export const debtProService = {
     },
 
     async getReminderConfig(debtId: string): Promise<DebtReminder | null> {
-        const { data, error } = await supabase
-            .from('debt_reminders')
-            .select('*')
-            .eq('debt_id', debtId)
-            .maybeSingle()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('debt pro reminders', error)
-                return readReminderFallback(debtId)
-            }
-            throw error
-        }
-
-        return (data as DebtReminder | null) ?? null
+        return getById<DebtReminder>('debt_reminders', debtId).catch(() => null)
     },
 
     async upsertReminderConfig(input: ReminderConfigInput): Promise<DebtReminder> {
-        const payload = {
+        const ref = doc(db, 'debt_reminders', input.debtId)
+        const existing = (await getDoc(ref).catch(() => null))?.data()
+        const now = nowIso()
+        const data = {
             debt_id: input.debtId,
             group_id: input.groupId,
             debtor_id: input.debtorId,
@@ -106,25 +92,14 @@ export const debtProService = {
             channels: input.channels,
             active: input.active,
             next_run_at: nextReminderDate(input.frequency),
-            updated_at: new Date().toISOString(),
+            last_sent_at: (existing?.last_sent_at as string | null | undefined) ?? null,
+            created_at: (existing?.created_at as string | undefined) ?? now,
+            updated_at: now,
         }
-
-        const { data, error } = await supabase
-            .from('debt_reminders')
-            .upsert(payload, { onConflict: 'debt_id' })
-            .select('*')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('debt pro reminders', error)
-                return upsertReminderFallback(payload)
-            }
-            throw error
-        }
-
-        return data as DebtReminder
+        await setDoc(ref, data)
+        return { id: input.debtId, ...data }
     },
+
     async sendReminderNow(
         debt: Pick<Debt, 'id' | 'concept' | 'amount' | 'amount_paid' | 'currency'>,
         debtorName: string,
@@ -132,28 +107,17 @@ export const debtProService = {
     ): Promise<{ whatsappUrl: string | null }> {
         const text = this.buildReminderText(debt, debtorName)
 
-        if (reminder.channels.push && typeof window !== 'undefined' && 'Notification' in window) {
-            if (Notification.permission === 'granted') {
-                new Notification('The Appden - Recordatorio de deuda', { body: text })
-            }
+        if (reminder.channels.push && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification('The Appden - Recordatorio de deuda', { body: text })
         }
 
         const whatsappUrl = reminder.channels.whatsapp ? buildWhatsAppUrl(text) : null
-
-        const payload = {
-            last_sent_at: new Date().toISOString(),
+        const now = nowIso()
+        await updateDoc(doc(db, 'debt_reminders', debt.id), {
+            last_sent_at: now,
             next_run_at: nextReminderDate(reminder.frequency),
-            updated_at: new Date().toISOString(),
-        }
-
-        const { error } = await supabase
-            .from('debt_reminders')
-            .update(payload)
-            .eq('debt_id', debt.id)
-
-        if (error && isMissingRelationError(error)) touchReminderFallback(debt.id, payload)
-        else if (error) throw error
-
+            updated_at: now,
+        })
         return { whatsappUrl }
     },
 
@@ -168,85 +132,65 @@ export const debtProService = {
         const remaining = Math.max(0, input.totalAmount - input.amountPaid)
         if (remaining <= 0) return []
 
+        const debt = await getById<Debt>('debts', input.debtId)
+        if (!debt) throw new Error('Esta deuda ya no existe.')
+
         const base = roundMoney(remaining / safeCount)
+        const now = nowIso()
         const items: DebtInstallment[] = []
         let assigned = 0
-
         for (let index = 0; index < safeCount; index += 1) {
             const amount = index === safeCount - 1 ? roundMoney(remaining - assigned) : base
             assigned += amount
             items.push({
-                id: crypto.randomUUID(),
+                id: `${input.debtId}_${index + 1}`,
                 debt_id: input.debtId,
                 installment_number: index + 1,
                 amount,
                 due_date: addMonths(input.firstDueDate, index),
                 status: 'pending',
                 paid_at: null,
-                created_at: new Date().toISOString(),
+                created_at: now,
             })
         }
 
-        const payload = items.map((item) => ({
-            debt_id: item.debt_id,
-            installment_number: item.installment_number,
-            amount: item.amount,
-            due_date: item.due_date,
-            status: item.status,
-            paid_at: null,
-        }))
-
-        const { data, error } = await supabase
-            .from('debt_installments')
-            .upsert(payload, { onConflict: 'debt_id,installment_number' })
-            .select('*')
-            .order('installment_number', { ascending: true })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                writeInstallmentFallback(input.debtId, items)
-                return items
-            }
-            throw error
-        }
-
-        return (data ?? []) as DebtInstallment[]
+        // The new plan replaces the previous one entirely.
+        const previous = await queryDocs<InstallmentDoc>(
+            'debt_installments',
+            where('group_id', '==', debt.group_id),
+            where('debt_id', '==', input.debtId)
+        )
+        const batch = writeBatch(db)
+        for (const old of previous) if (!items.some((item) => item.id === old.id)) batch.delete(doc(db, 'debt_installments', old.id))
+        for (const { id, ...item } of items) batch.set(doc(db, 'debt_installments', id), { ...item, group_id: debt.group_id })
+        await batch.commit()
+        return items
     },
 
     async getPaymentPlan(debtId: string, amountPaid: number): Promise<DebtInstallment[]> {
-        const { data, error } = await supabase
-            .from('debt_installments')
-            .select('*')
-            .eq('debt_id', debtId)
-            .order('installment_number', { ascending: true })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                return applyInstallmentPayments(readInstallmentFallback(debtId), amountPaid)
-            }
-            throw error
-        }
-
-        return applyInstallmentPayments((data ?? []) as DebtInstallment[], amountPaid)
+        const debt = await getById<Debt>('debts', debtId)
+        if (!debt) return []
+        const items = await queryDocs<InstallmentDoc>(
+            'debt_installments',
+            where('group_id', '==', debt.group_id),
+            where('debt_id', '==', debtId)
+        )
+        return applyInstallmentPayments(
+            items.sort((a, b) => a.installment_number - b.installment_number),
+            amountPaid
+        )
     },
+
     async getSettlementPlan(groupId: string): Promise<GroupSettlementTransfer[]> {
-        const { data, error } = await supabase
-            .from('debts')
-            .select('creditor_id, debtor_id, amount, amount_paid, status, currency')
-            .eq('group_id', groupId)
-            .neq('status', 'paid')
-
-        if (error) throw error
-
+        const open = (await groupDebts(groupId)).filter((debt) => debt.status !== 'paid')
         // Integer-cent settlement per currency (never mixes € with $).
-        return settleOpenDebts((data ?? []) as Array<Pick<Debt, 'creditor_id' | 'debtor_id' | 'amount' | 'amount_paid' | 'status' | 'currency'>>).flatMap(
-            (bucket) =>
-                bucket.transfers.map((transfer) => ({
-                    from_user_id: transfer.fromId,
-                    to_user_id: transfer.toId,
-                    amount: centsToAmount(transfer.cents),
-                    currency: bucket.currency as DebtCurrency,
-                }))
+        return settleOpenDebts(open).flatMap((bucket) =>
+            bucket.transfers.map((transfer) => ({
+                from_user_id: transfer.fromId,
+                to_user_id: transfer.toId,
+                amount: centsToAmount(transfer.cents),
+                currency: bucket.currency as DebtCurrency,
+            }))
         )
     },
 
@@ -258,36 +202,18 @@ export const debtProService = {
         const start = new Date(year, monthNum - 1, 1).toISOString()
         const end = new Date(year, monthNum, 1).toISOString()
 
-        const { data: debts, error: debtsError } = await supabase
-            .from('debts')
-            .select('id, amount, amount_paid, status, created_at, currency')
-            .eq('group_id', groupId)
-            .eq('currency', currency)
-
-        if (debtsError) throw debtsError
-
-        const createdThisMonth = (debts ?? []).filter((item) => item.created_at >= start && item.created_at < end)
+        const debts = (await groupDebts(groupId)).filter((item) => item.currency === currency)
+        const createdThisMonth = debts.filter((item) => item.created_at >= start && item.created_at < end)
         const totalCreated = createdThisMonth.reduce((sum, item) => sum + Number(item.amount), 0)
-
-        const pendingAmount = (debts ?? [])
+        const pendingAmount = debts
             .filter((item) => item.status !== 'paid')
             .reduce((sum, item) => sum + Math.max(0, Number(item.amount) - Number(item.amount_paid)), 0)
 
-        const debtIds = (debts ?? []).map((item) => item.id)
-        let totalPaid = 0
-
-        if (debtIds.length > 0) {
-            const { data: payments, error: paymentsError } = await supabase
-                .from('debt_payments')
-                .select('amount, created_at')
-                .in('debt_id', debtIds)
-                .gte('created_at', start)
-                .lt('created_at', end)
-
-            if (!paymentsError) {
-                totalPaid = (payments ?? []).reduce((sum, item) => sum + Number(item.amount), 0)
-            }
-        }
+        const debtIds = new Set(debts.map((item) => item.id))
+        const payments = await queryDocs<DebtPayment>('debt_payments', where('group_id', '==', groupId))
+        const totalPaid = payments
+            .filter((item) => debtIds.has(item.debt_id) && item.created_at >= start && item.created_at < end)
+            .reduce((sum, item) => sum + Number(item.amount), 0)
 
         const overdueAmount = await this.getOverdueAmount(groupId)
 
@@ -297,21 +223,16 @@ export const debtProService = {
             total_paid: roundMoney(totalPaid),
             pending_amount: roundMoney(pendingAmount),
             overdue_amount: roundMoney(overdueAmount),
-            active_debts: (debts ?? []).filter((item) => item.status !== 'paid').length,
+            active_debts: debts.filter((item) => item.status !== 'paid').length,
         }
     },
 
     async getFinancialHealth(groupId: string): Promise<GroupFinancialHealth> {
-        const { data: debts, error } = await supabase
-            .from('debts')
-            .select('creditor_id, debtor_id, amount, amount_paid, status')
-            .eq('group_id', groupId)
+        const debts = await groupDebts(groupId)
 
-        if (error) throw error
-
-        const totalAmount = (debts ?? []).reduce((sum, item) => sum + Number(item.amount), 0)
-        const totalPaid = (debts ?? []).reduce((sum, item) => sum + Number(item.amount_paid), 0)
-        const pending = (debts ?? []).reduce((sum, item) => {
+        const totalAmount = debts.reduce((sum, item) => sum + Number(item.amount), 0)
+        const totalPaid = debts.reduce((sum, item) => sum + Number(item.amount_paid), 0)
+        const pending = debts.reduce((sum, item) => {
             if (item.status === 'paid') return sum
             return sum + Math.max(0, Number(item.amount) - Number(item.amount_paid))
         }, 0)
@@ -321,45 +242,28 @@ export const debtProService = {
         const repaymentRatio = totalAmount > 0 ? clamp01(totalPaid / totalAmount) : 1
 
         const debtByDebtor = new Map<string, number>()
-        for (const debt of debts ?? []) {
+        for (const debt of debts) {
             const remaining = Math.max(0, Number(debt.amount) - Number(debt.amount_paid))
             if (remaining <= 0) continue
-            debtByDebtor.set(String(debt.debtor_id), (debtByDebtor.get(String(debt.debtor_id)) ?? 0) + remaining)
+            debtByDebtor.set(debt.debtor_id, (debtByDebtor.get(debt.debtor_id) ?? 0) + remaining)
         }
 
         const maxConcentration = Math.max(0, ...Array.from(debtByDebtor.values()))
         const concentrationRatio = pending > 0 ? clamp01(maxConcentration / pending) : 0
-
         const score = Math.round(Math.max(0, Math.min(100, 100 - overdueRatio * 40 - (1 - repaymentRatio) * 35 - concentrationRatio * 25)))
-
         const status = score >= 85 ? 'excellent' : score >= 70 ? 'healthy' : score >= 45 ? 'warning' : 'critical'
 
-        return {
-            score,
-            status,
-            indicators: { overdueRatio, repaymentRatio, concentrationRatio },
-        }
+        return { score, status, indicators: { overdueRatio, repaymentRatio, concentrationRatio } }
     },
+
     async listGoals(groupId: string): Promise<GroupGoal[]> {
-        const { data, error } = await supabase
-            .from('group_goals')
-            .select('*')
-            .eq('group_id', groupId)
-            .order('created_at', { ascending: false })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('debt pro goals', error)
-                return readGoalFallback(groupId)
-            }
-            throw error
-        }
-
-        return (data ?? []) as GroupGoal[]
+        const goals = await queryDocs<GroupGoal>('group_goals', where('group_id', '==', groupId))
+        return goals.sort((a, b) => b.created_at.localeCompare(a.created_at))
     },
 
     async createGoal(input: GoalInput): Promise<GroupGoal> {
-        const payload = {
+        const now = nowIso()
+        const data = {
             group_id: input.groupId,
             created_by: input.createdBy,
             title: input.title.trim(),
@@ -368,80 +272,43 @@ export const debtProService = {
             current_value: 0,
             deadline: input.deadline ?? null,
             status: 'active' as GroupGoalStatus,
+            created_at: now,
+            updated_at: now,
         }
-
-        const { data, error } = await supabase.from('group_goals').insert(payload).select('*').single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('debt pro goals', error)
-                return createGoalFallback(payload)
-            }
-            throw error
-        }
-
-        return data as GroupGoal
+        const ref = await addDoc(collection(db, 'group_goals'), data)
+        return { id: ref.id, ...data }
     },
 
     async updateGoalProgress(goalId: string, currentValue: number): Promise<void> {
         const goal = await this.getGoalById(goalId)
         if (!goal) return
-
         const normalized = Math.max(0, currentValue)
-        const completed = normalized >= goal.target_value
-        const payload = {
+        await updateDoc(doc(db, 'group_goals', goalId), {
             current_value: normalized,
-            status: completed ? 'completed' : goal.status,
-            updated_at: new Date().toISOString(),
-        }
-
-        const { error } = await supabase.from('group_goals').update(payload).eq('id', goalId)
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                updateGoalFallback(goalId, payload.current_value, payload.status as GroupGoalStatus)
-                return
-            }
-            throw error
-        }
+            status: normalized >= goal.target_value ? 'completed' : goal.status,
+            updated_at: nowIso(),
+        })
     },
 
     async listBadges(groupId: string, userId?: string): Promise<UserBadge[]> {
-        let query = supabase.from('user_badges').select('*').eq('group_id', groupId).order('awarded_at', { ascending: false })
-        if (userId) query = query.eq('user_id', userId)
-
-        const { data, error } = await query
-        if (error) {
-            if (isMissingRelationError(error)) {
-                return readBadgeFallback(groupId).filter((item) => (userId ? item.user_id === userId : true))
-            }
-            throw error
-        }
-
-        return (data ?? []) as UserBadge[]
+        const badges = await queryDocs<UserBadge>(
+            'user_badges',
+            where('group_id', '==', groupId),
+            ...(userId ? [where('user_id', '==', userId)] : [])
+        )
+        return badges.sort((a, b) => b.awarded_at.localeCompare(a.awarded_at))
     },
 
     async recomputeBadges(groupId: string): Promise<UserBadge[]> {
-        const [debtsResult, membersResult] = await Promise.all([
-            supabase.from('debts').select('creditor_id, debtor_id, amount, amount_paid, status').eq('group_id', groupId),
-            supabase.from('group_members').select('user_id').eq('group_id', groupId),
-        ])
-
-        if (debtsResult.error) throw debtsResult.error
-        if (membersResult.error) throw membersResult.error
-
-        const debts = debtsResult.data ?? []
-        const members = (membersResult.data ?? []) as Array<Pick<GroupMember, 'user_id'>>
+        const [debts, group] = await Promise.all([groupDebts(groupId), getById<{ member_ids: string[] }>('groups', groupId)])
+        const memberIds = group?.member_ids ?? []
 
         const outstandingByDebtor = new Map<string, number>()
         const lentByCreditor = new Map<string, number>()
-
         for (const debt of debts) {
             const remaining = Math.max(0, Number(debt.amount) - Number(debt.amount_paid))
-            if (remaining > 0) {
-                outstandingByDebtor.set(String(debt.debtor_id), (outstandingByDebtor.get(String(debt.debtor_id)) ?? 0) + remaining)
-            }
-            lentByCreditor.set(String(debt.creditor_id), (lentByCreditor.get(String(debt.creditor_id)) ?? 0) + Number(debt.amount))
+            if (remaining > 0) outstandingByDebtor.set(debt.debtor_id, (outstandingByDebtor.get(debt.debtor_id) ?? 0) + remaining)
+            lentByCreditor.set(debt.creditor_id, (lentByCreditor.get(debt.creditor_id) ?? 0) + Number(debt.amount))
         }
 
         let topContributor: string | null = null
@@ -454,58 +321,53 @@ export const debtProService = {
         }
 
         const badges: UserBadge[] = []
-        for (const member of members) {
-            const userId = String(member.user_id)
-            const outstanding = outstandingByDebtor.get(userId) ?? 0
-
-            if (outstanding <= 0.009) badges.push(buildBadge(groupId, userId, 'sin_deuda', 'Sin deuda'))
+        for (const userId of memberIds) {
+            if ((outstandingByDebtor.get(userId) ?? 0) <= 0.009) badges.push(buildBadge(groupId, userId, 'sin_deuda', 'Sin deuda'))
             if (topContributor && userId === topContributor) badges.push(buildBadge(groupId, userId, 'top_contributor', 'Top contributor'))
-
-            const debtsAsDebtor = debts.filter((item) => String(item.debtor_id) === userId)
-            const fullyPaid = debtsAsDebtor.length > 0 && debtsAsDebtor.every((item) => item.status === 'paid')
-            if (fullyPaid) badges.push(buildBadge(groupId, userId, 'pagador_constante', 'Pagador constante'))
-        }
-
-        const uniqueBadges = dedupeBadges(badges)
-        const payload = uniqueBadges.map((badge) => ({
-            group_id: badge.group_id,
-            user_id: badge.user_id,
-            badge_key: badge.badge_key,
-            badge_label: badge.badge_label,
-            payload: badge.payload,
-        }))
-
-        const { error } = await supabase.from('user_badges').upsert(payload, { onConflict: 'group_id,user_id,badge_key' })
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                writeBadgeFallback(groupId, uniqueBadges)
-                return uniqueBadges
+            const debtsAsDebtor = debts.filter((item) => item.debtor_id === userId)
+            if (debtsAsDebtor.length > 0 && debtsAsDebtor.every((item) => item.status === 'paid')) {
+                badges.push(buildBadge(groupId, userId, 'pagador_constante', 'Pagador constante'))
             }
-            throw error
         }
 
-        return uniqueBadges
+        const previous = await queryDocs<UserBadge>('user_badges', where('group_id', '==', groupId))
+        const keep = new Set(badges.map((badge) => badge.id))
+        const batch = writeBatch(db)
+        for (const old of previous) if (!keep.has(old.id)) batch.delete(doc(db, 'user_badges', old.id))
+        for (const { id, ...badge } of badges) {
+            const awardedAt = previous.find((old) => old.id === id)?.awarded_at ?? badge.awarded_at
+            batch.set(doc(db, 'user_badges', id), { ...badge, awarded_at: awardedAt })
+        }
+        await batch.commit()
+        return badges
     },
-    async exportGroupData(groupId: string, format: 'csv' | 'json'): Promise<{ filename: string; mime: string; content: string }> {
-        const { data: debts, error } = await supabase
-            .from('debts')
-            .select('id, creditor_id, debtor_id, amount, amount_paid, currency, concept, status, created_at, updated_at')
-            .eq('group_id', groupId)
-            .order('created_at', { ascending: false })
 
-        if (error) throw error
+    async exportGroupData(groupId: string, format: 'csv' | 'json'): Promise<{ filename: string; mime: string; content: string }> {
+        const debts = (await groupDebts(groupId))
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+            .map(({ id, creditor_id, debtor_id, amount, amount_paid, currency, concept, status, created_at, updated_at }) => ({
+                id,
+                creditor_id,
+                debtor_id,
+                amount,
+                amount_paid,
+                currency,
+                concept,
+                status,
+                created_at,
+                updated_at,
+            }))
 
         if (format === 'json') {
             return {
                 filename: `the-appden-debts-${groupId}.json`,
                 mime: 'application/json',
-                content: JSON.stringify({ exportedAt: new Date().toISOString(), debts: debts ?? [] }, null, 2),
+                content: JSON.stringify({ exportedAt: nowIso(), debts }, null, 2),
             }
         }
 
         const header = ['id', 'creditor_id', 'debtor_id', 'amount', 'amount_paid', 'currency', 'concept', 'status', 'created_at', 'updated_at']
-        const rows = (debts ?? []).map((row) => [
+        const rows = debts.map((row) => [
             row.id,
             row.creditor_id,
             row.debtor_id,
@@ -526,21 +388,12 @@ export const debtProService = {
     },
 
     async listGroupPermissions(groupId: string): Promise<GroupMemberPermission[]> {
-        const { data, error } = await supabase.from('group_member_permissions').select('*').eq('group_id', groupId)
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('debt pro permissions', error)
-                return readPermissionFallback(groupId)
-            }
-            throw error
-        }
-
-        return (data ?? []) as GroupMemberPermission[]
+        return queryDocs<GroupMemberPermission>('group_member_permissions', where('group_id', '==', groupId))
     },
 
     async upsertGroupPermission(input: PermissionInput): Promise<GroupMemberPermission> {
-        const payload = {
+        const id = `${input.groupId}_${input.userId}`
+        const data = {
             group_id: input.groupId,
             user_id: input.userId,
             can_manage_debts: input.canManageDebts,
@@ -548,62 +401,25 @@ export const debtProService = {
             can_manage_files: input.canManageFiles,
             can_manage_members: input.canManageMembers,
             updated_by: input.updatedBy,
-            updated_at: new Date().toISOString(),
+            updated_at: nowIso(),
         }
-
-        const { data, error } = await supabase
-            .from('group_member_permissions')
-            .upsert(payload, { onConflict: 'group_id,user_id' })
-            .select('*')
-            .single()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('debt pro permissions', error)
-                return upsertPermissionFallback(payload)
-            }
-            throw error
-        }
-
-        return data as GroupMemberPermission
+        await setDoc(doc(db, 'group_member_permissions', id), data)
+        return { id, ...data }
     },
 
     async getOverdueAmount(groupId: string): Promise<number> {
         const today = new Date().toISOString().slice(0, 10)
-        const { data: installments, error } = await supabase
-            .from('debt_installments')
-            .select('amount, status, due_date, debt:debts!inner(group_id)')
-            .eq('debt.group_id', groupId)
-
-        if (error) {
-            if (isMissingRelationError(error)) return 0
-            throw error
-        }
-
+        const installments = await queryDocs<InstallmentDoc>('debt_installments', where('group_id', '==', groupId))
         return roundMoney(
-            (installments ?? []).reduce((sum, row) => {
-                const dueDate = String((row as { due_date: string }).due_date)
-                const status = String((row as { status: string }).status)
-                if (status === 'paid' || dueDate >= today) return sum
-                return sum + Number((row as { amount: number }).amount)
-            }, 0)
+            installments.reduce((sum, row) => (row.status === 'paid' || row.due_date >= today ? sum : sum + Number(row.amount)), 0)
         )
     },
 
     async getGoalById(goalId: string): Promise<GroupGoal | null> {
-        const { data, error } = await supabase.from('group_goals').select('*').eq('id', goalId).maybeSingle()
-
-        if (error) {
-            if (isMissingRelationError(error)) {
-                const all = readJson<GroupGoal[]>(STORAGE_KEYS.goals, [])
-                return all.find((item) => item.id === goalId) ?? null
-            }
-            throw error
-        }
-
-        return (data as GroupGoal | null) ?? null
+        return getById<GroupGoal>('group_goals', goalId)
     },
 }
+
 function nextReminderDate(frequency: DebtReminderFrequency): string {
     const days = frequency === 'suave' ? 7 : frequency === 'normal' ? 3 : 1
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
@@ -623,33 +439,21 @@ function applyInstallmentPayments(items: DebtInstallment[], amountPaid: number):
         const amount = Number(item.amount)
         const covered = Math.max(0, Math.min(amount, remainingPaid))
         remainingPaid = Math.max(0, remainingPaid - covered)
-
         const status = covered >= amount ? 'paid' : item.due_date < today ? 'overdue' : 'pending'
-
-        return {
-            ...item,
-            status,
-            paid_at: covered >= amount ? item.paid_at ?? new Date().toISOString() : null,
-        }
+        return { ...item, status, paid_at: covered >= amount ? item.paid_at ?? nowIso() : null }
     })
 }
 
 function buildBadge(groupId: string, userId: string, badgeKey: string, badgeLabel: string): UserBadge {
     return {
-        id: crypto.randomUUID(),
+        id: `${groupId}_${userId}_${badgeKey}`,
         group_id: groupId,
         user_id: userId,
         badge_key: badgeKey,
         badge_label: badgeLabel,
-        awarded_at: new Date().toISOString(),
+        awarded_at: nowIso(),
         payload: {},
     }
-}
-
-function dedupeBadges(items: UserBadge[]): UserBadge[] {
-    const map = new Map<string, UserBadge>()
-    for (const item of items) map.set(`${item.group_id}:${item.user_id}:${item.badge_key}`, item)
-    return Array.from(map.values())
 }
 
 function currentMonthKey(): string {
@@ -672,177 +476,4 @@ function roundMoney(value: number): number {
 
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value))
-}
-
-function readJson<T>(key: string, fallback: T): T {
-    if (typeof window === 'undefined') return fallback
-    try {
-        const raw = window.localStorage.getItem(key)
-        if (!raw) return fallback
-        return JSON.parse(raw) as T
-    } catch {
-        return fallback
-    }
-}
-
-function writeJson<T>(key: string, value: T): void {
-    if (typeof window === 'undefined') return
-    try {
-        window.localStorage.setItem(key, JSON.stringify(value))
-    } catch {
-        // Ignore storage errors.
-    }
-}
-
-function isMissingRelationError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const e = error as { code?: string; message?: string; details?: string }
-    const raw = `${e.code ?? ''} ${e.message ?? ''} ${e.details ?? ''}`.toLowerCase()
-    return raw.includes('42p01') || raw.includes('pgrst205') || raw.includes('does not exist')
-}
-
-function readReminderFallback(debtId: string): DebtReminder | null {
-    const all = readJson<DebtReminder[]>(STORAGE_KEYS.reminders, [])
-    return all.find((item) => item.debt_id === debtId) ?? null
-}
-
-function upsertReminderFallback(payload: {
-    debt_id: string
-    group_id: string
-    debtor_id: string
-    created_by: string
-    frequency: DebtReminderFrequency
-    channels: ReminderChannels
-    active: boolean
-    next_run_at: string
-    updated_at: string
-}): DebtReminder {
-    const all = readJson<DebtReminder[]>(STORAGE_KEYS.reminders, [])
-    const now = new Date().toISOString()
-    const existing = all.find((item) => item.debt_id === payload.debt_id)
-
-    const nextItem: DebtReminder = {
-        id: existing?.id ?? crypto.randomUUID(),
-        debt_id: payload.debt_id,
-        group_id: payload.group_id,
-        debtor_id: payload.debtor_id,
-        created_by: payload.created_by,
-        frequency: payload.frequency,
-        channels: payload.channels,
-        next_run_at: payload.next_run_at,
-        last_sent_at: existing?.last_sent_at ?? null,
-        active: payload.active,
-        created_at: existing?.created_at ?? now,
-        updated_at: payload.updated_at,
-    }
-
-    const next = [nextItem, ...all.filter((item) => item.debt_id !== payload.debt_id)]
-    writeJson(STORAGE_KEYS.reminders, next)
-    return nextItem
-}
-
-function touchReminderFallback(debtId: string, payload: { last_sent_at: string; next_run_at: string; updated_at: string }): void {
-    const all = readJson<DebtReminder[]>(STORAGE_KEYS.reminders, [])
-    const next = all.map((item) => {
-        if (item.debt_id !== debtId) return item
-        return { ...item, last_sent_at: payload.last_sent_at, next_run_at: payload.next_run_at, updated_at: payload.updated_at }
-    })
-    writeJson(STORAGE_KEYS.reminders, next)
-}
-
-function readInstallmentFallback(debtId: string): DebtInstallment[] {
-    const store = readJson<Record<string, DebtInstallment[]>>(STORAGE_KEYS.installments, {})
-    return store[debtId] ?? []
-}
-
-function writeInstallmentFallback(debtId: string, installments: DebtInstallment[]): void {
-    const store = readJson<Record<string, DebtInstallment[]>>(STORAGE_KEYS.installments, {})
-    store[debtId] = installments
-    writeJson(STORAGE_KEYS.installments, store)
-}
-
-function readGoalFallback(groupId: string): GroupGoal[] {
-    return readJson<GroupGoal[]>(STORAGE_KEYS.goals, []).filter((item) => item.group_id === groupId)
-}
-
-function createGoalFallback(payload: {
-    group_id: string
-    created_by: string
-    title: string
-    target_type: GroupGoalType
-    target_value: number
-    current_value: number
-    deadline: string | null
-    status: GroupGoalStatus
-}): GroupGoal {
-    const all = readJson<GroupGoal[]>(STORAGE_KEYS.goals, [])
-    const now = new Date().toISOString()
-    const nextGoal: GroupGoal = {
-        id: crypto.randomUUID(),
-        group_id: payload.group_id,
-        created_by: payload.created_by,
-        title: payload.title,
-        target_type: payload.target_type,
-        target_value: payload.target_value,
-        current_value: payload.current_value,
-        deadline: payload.deadline,
-        status: payload.status,
-        created_at: now,
-        updated_at: now,
-    }
-    writeJson(STORAGE_KEYS.goals, [nextGoal, ...all])
-    return nextGoal
-}
-
-function updateGoalFallback(goalId: string, currentValue: number, status: GroupGoalStatus): void {
-    const all = readJson<GroupGoal[]>(STORAGE_KEYS.goals, [])
-    const next = all.map((item) => {
-        if (item.id !== goalId) return item
-        return { ...item, current_value: currentValue, status, updated_at: new Date().toISOString() }
-    })
-    writeJson(STORAGE_KEYS.goals, next)
-}
-
-function readBadgeFallback(groupId: string): UserBadge[] {
-    return readJson<UserBadge[]>(STORAGE_KEYS.badges, []).filter((item) => item.group_id === groupId)
-}
-
-function writeBadgeFallback(groupId: string, badges: UserBadge[]): void {
-    const all = readJson<UserBadge[]>(STORAGE_KEYS.badges, [])
-    const keep = all.filter((item) => item.group_id !== groupId)
-    writeJson(STORAGE_KEYS.badges, [...badges, ...keep])
-}
-
-function readPermissionFallback(groupId: string): GroupMemberPermission[] {
-    return readJson<GroupMemberPermission[]>(STORAGE_KEYS.permissions, []).filter((item) => item.group_id === groupId)
-}
-
-function upsertPermissionFallback(payload: {
-    group_id: string
-    user_id: string
-    can_manage_debts: boolean
-    can_manage_music: boolean
-    can_manage_files: boolean
-    can_manage_members: boolean
-    updated_by: string
-    updated_at: string
-}): GroupMemberPermission {
-    const all = readJson<GroupMemberPermission[]>(STORAGE_KEYS.permissions, [])
-    const existing = all.find((item) => item.group_id === payload.group_id && item.user_id === payload.user_id)
-
-    const nextItem: GroupMemberPermission = {
-        id: existing?.id ?? crypto.randomUUID(),
-        group_id: payload.group_id,
-        user_id: payload.user_id,
-        can_manage_debts: payload.can_manage_debts,
-        can_manage_music: payload.can_manage_music,
-        can_manage_files: payload.can_manage_files,
-        can_manage_members: payload.can_manage_members,
-        updated_by: payload.updated_by,
-        updated_at: payload.updated_at,
-    }
-
-    const next = [nextItem, ...all.filter((item) => !(item.group_id === payload.group_id && item.user_id === payload.user_id))]
-    writeJson(STORAGE_KEYS.permissions, next)
-    return nextItem
 }

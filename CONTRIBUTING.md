@@ -49,5 +49,5 @@ Use conventional commits:
 ## Security rules
 
 - Never commit `.env.local` or secrets.
-- Use least privilege in Supabase policies.
+- Use least privilege in `firestore.rules` and the R2 Worker.
 - Avoid broad `SELECT` policies without group/user constraints.

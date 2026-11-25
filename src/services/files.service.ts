@@ -1,11 +1,9 @@
-import { supabase, STORAGE_BUCKETS, getStorageUrl, storage } from '@lib/supabase/client'
+import { addDoc, collection, deleteDoc, doc, getDoc, where } from 'firebase/firestore'
+import { db, STORAGE_BUCKETS, getStorageUrl, storage } from '@lib/firebase/client'
+import { fetchProfilesMap, nowIso, queryDocs } from '@lib/firebase/db'
 import { generateStoragePath } from '@lib/utils'
 import { ALLOWED_IMAGE_TYPES } from '@lib/constants'
 import type { SharedFile } from '@/types'
-
-function buildFileStoragePath(groupId: string, userId: string, filename: string): string {
-    return generateStoragePath(`${groupId}/files`, userId, filename)
-}
 
 function isExternalUrl(value: string | null | undefined): boolean {
     return !!value && /^https?:\/\//i.test(value.trim())
@@ -13,104 +11,54 @@ function isExternalUrl(value: string | null | undefined): boolean {
 
 async function resolveFileUrl(pathOrUrl: string | null | undefined): Promise<string> {
     if (!pathOrUrl) return ''
-
-    if (isExternalUrl(pathOrUrl)) {
-        return pathOrUrl.trim()
-    }
-
-    const signed = await getStorageUrl(STORAGE_BUCKETS.FILES, pathOrUrl)
-    return signed ?? pathOrUrl
+    if (isExternalUrl(pathOrUrl)) return pathOrUrl.trim()
+    return (await getStorageUrl(STORAGE_BUCKETS.FILES, pathOrUrl)) ?? pathOrUrl
 }
 
 export const filesService = {
-    /**
-     * Get all files for a group.
-     */
     async getFiles(groupId: string): Promise<SharedFile[]> {
-        const { data, error } = await supabase
-            .from('files')
-            .select('*, uploader:profiles!files_uploaded_by_fkey(id, display_name, avatar_url)')
-            .eq('group_id', groupId)
-            .order('created_at', { ascending: false })
-
-        if (error) throw error
-
-        const files = (data ?? []) as SharedFile[]
+        const files = await queryDocs<SharedFile>('files', where('group_id', '==', groupId))
+        const uploaders = await fetchProfilesMap(files.map((file) => file.uploaded_by))
         return Promise.all(
-            files.map(async (file) => ({
-                ...file,
-                file_url: await resolveFileUrl(file.file_url),
-            }))
+            files
+                .sort((a, b) => b.created_at.localeCompare(a.created_at))
+                .map(async (file) => ({ ...file, uploader: uploaders.get(file.uploaded_by), file_url: await resolveFileUrl(file.file_url) }))
         )
     },
 
-    /**
-     * Upload a file to Storage and save metadata.
-     */
-    async uploadFile(
-        userId: string,
-        groupId: string,
-        file: File,
-        customName: string
-    ): Promise<SharedFile> {
-        const isImage = ALLOWED_IMAGE_TYPES.includes(file.type)
-        const category = isImage ? 'image' : 'document'
-        const path = buildFileStoragePath(groupId, userId, file.name)
+    async uploadFile(userId: string, groupId: string, file: File, customName: string): Promise<SharedFile> {
+        const category = ALLOWED_IMAGE_TYPES.includes(file.type) ? 'image' : 'document'
+        const path = generateStoragePath(`${groupId}/files`, userId, file.name)
 
         const { error: uploadError } = await storage
             .from(STORAGE_BUCKETS.FILES)
-            .upload(path, file, {
-                cacheControl: '3600',
-                upsert: false,
-                contentType: file.type || undefined,
-            })
+            .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type || undefined })
+        if (uploadError) throw new Error(uploadError.message)
 
-        if (uploadError) throw uploadError
-
-        const { data, error } = await supabase
-            .from('files')
-            .insert({
-                group_id: groupId,
-                uploaded_by: userId,
-                name: customName || file.name,
-                file_url: path,
-                file_size: file.size,
-                mime_type: file.type,
-                category,
-            })
-            .select()
-            .single()
-
-        if (error) {
-            await storage.from(STORAGE_BUCKETS.FILES).remove([path]).catch(() => {
-                // Best-effort cleanup only.
-            })
-            throw error
+        const data = {
+            group_id: groupId,
+            uploaded_by: userId,
+            name: customName || file.name,
+            file_url: path,
+            file_size: file.size,
+            mime_type: file.type || null,
+            category: category as SharedFile['category'],
+            created_at: nowIso(),
         }
-
-        return {
-            ...(data as SharedFile),
-            file_url: await resolveFileUrl(path),
+        try {
+            const ref = await addDoc(collection(db, 'files'), data)
+            return { id: ref.id, ...data, file_url: await resolveFileUrl(path) }
+        } catch (error) {
+            await storage.from(STORAGE_BUCKETS.FILES).remove([path]).catch(() => undefined)
+            throw error
         }
     },
 
-    /**
-     * Delete a file record. Storage cleanup via lifecycle policy.
-     */
     async deleteFile(fileId: string): Promise<void> {
-        const { data: existing } = await supabase
-            .from('files')
-            .select('file_url')
-            .eq('id', fileId)
-            .maybeSingle()
-
-        const { error } = await supabase.from('files').delete().eq('id', fileId)
-        if (error) throw error
-
+        const existing = (await getDoc(doc(db, 'files', fileId))).data() as SharedFile | undefined
+        await deleteDoc(doc(db, 'files', fileId))
         if (existing?.file_url && !isExternalUrl(existing.file_url)) {
-            await storage.from(STORAGE_BUCKETS.FILES).remove([existing.file_url]).catch(() => {
-                // Best-effort cleanup only.
-            })
+            await storage.from(STORAGE_BUCKETS.FILES).remove([existing.file_url]).catch(() => undefined)
         }
     },
 }

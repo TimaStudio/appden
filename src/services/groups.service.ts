@@ -1,317 +1,160 @@
-import { supabase } from '@lib/supabase/client'
-import type { Group, GroupMember } from '@/types'
+import { arrayRemove, arrayUnion, doc, getDoc, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { auth, db } from '@lib/firebase/client'
+import { fetchProfilesMap, getById, getManyByIds, newId, nowIso, queryDocs } from '@lib/firebase/db'
+import type { Group, GroupMember, GroupRole } from '@/types'
+
+const memberDocId = (groupId: string, userId: string) => `${groupId}_${userId}`
 
 export const groupsService = {
-    /**
-     * Fetch all groups the current user belongs to.
-     */
+    /** Groups the user belongs to, newest first. */
     async getGroups(userId: string): Promise<Group[]> {
-        // Inner join on the caller's membership: RLS also lets invitees read a group
-        // (to render the invitation), but those groups must not show up as "mine".
-        const { data, error } = await supabase
-            .from('groups')
-            .select('*, my_membership:group_members!inner(user_id, role)')
-            .eq('my_membership.user_id', userId)
-            .order('created_at', { ascending: false })
-
-        if (!error) {
-            return ((data ?? []) as Array<Group & { my_membership?: unknown }>).map(({ my_membership: _membership, ...group }) => group as Group)
-        }
-
-        // Compatibility fallback for partially migrated environments:
-        // at minimum keep owned groups readable while the RLS hotfix is pending.
-        const { data: ownedData, error: ownedError } = await supabase
-            .from('groups')
-            .select('*')
-            .eq('created_by', userId)
-            .order('created_at', { ascending: false })
-
-        if (ownedError) throw error
-        return (ownedData ?? []) as Group[]
+        const groups = await queryDocs<Group>('groups', where('member_ids', 'array-contains', userId))
+        return groups.sort((a, b) => b.created_at.localeCompare(a.created_at))
     },
 
-    /**
-     * Alias for getGroups for backward compatibility.
-     */
     async getMyGroups(userId: string): Promise<Group[]> {
         return this.getGroups(userId)
     },
 
-    /**
-     * Fetch a single group by ID.
-     */
     async getGroup(groupId: string): Promise<Group> {
-        const { data, error } = await supabase
-            .from('groups')
-            .select('*')
-            .eq('id', groupId)
-            .single()
-
-        if (error) throw error
-        return data as Group
-    },
-
-    /**
-     * Fetch members of a group with their profiles.
-     */
-    async getGroupMembers(groupId: string): Promise<GroupMember[]> {
-        const { data, error } = await supabase
-            .from('group_members')
-            .select('*, profile:profiles(*)')
-            .eq('group_id', groupId)
-
-        if (error) throw error
-        return data as GroupMember[]
-    },
-
-    /**
-     * Member counts for several groups in a single round-trip.
-     */
-    async getMemberCounts(groupIds: string[]): Promise<Record<string, number>> {
-        if (groupIds.length === 0) return {}
-        const { data, error } = await supabase.from('group_members').select('group_id').in('group_id', groupIds)
-        if (error) throw error
-        const counts: Record<string, number> = {}
-        for (const row of (data ?? []) as Array<{ group_id: string }>) {
-            counts[row.group_id] = (counts[row.group_id] ?? 0) + 1
-        }
-        return counts
-    },
-
-    /**
-     * Create a new group.
-     */
-    async createGroup(groupData: {
-        name: string
-        description: string | null
-        created_by: string
-    }): Promise<Group> {
-        const name = groupData.name.trim()
-        const description = groupData.description?.trim() ? groupData.description.trim() : null
-
-        const rpcResult = await supabase.rpc('create_group_with_owner', {
-            p_name: name,
-            p_description: description,
-        })
-
-        if (!rpcResult.error) {
-            const group = extractRpcGroup(rpcResult.data)
-            if (group) return group
-        } else if (!isMissingFunctionError(rpcResult.error)) {
-            throw rpcResult.error
-        }
-
-        // Legacy fallback while migration 010 is not yet applied.
-        const { data, error } = await supabase
-            .from('groups')
-            .insert({
-                name,
-                description,
-                created_by: groupData.created_by,
-            })
-            .select()
-            .single()
-
-        if (error) throw error
-
-        const group = data as Group
-
-        // Prefer plain insert to avoid requiring UPDATE RLS when the owner row
-        // was already created by a DB trigger in newer schemas.
-        const { error: ownerMembershipError } = await supabase
-            .from('group_members')
-            .insert(
-                {
-                    group_id: group.id,
-                    user_id: groupData.created_by,
-                    role: 'owner',
-                }
-            )
-
-        if (ownerMembershipError) {
-            if (isDuplicateError(ownerMembershipError)) {
-                return group
-            }
-
-            const { data: existingMembership } = await supabase
-                .from('group_members')
-                .select('id')
-                .eq('group_id', group.id)
-                .eq('user_id', groupData.created_by)
-                .maybeSingle()
-
-            if (existingMembership) {
-                return group
-            }
-
-            throw ownerMembershipError
-        }
-
+        const group = await getById<Group>('groups', groupId)
+        if (!group) throw new Error('No encontramos este grupo.')
         return group
     },
 
-    /**
-     * Add a member to a group.
-     */
-    async addGroupMember(
-        groupId: string,
-        userId: string,
-        role: 'owner' | 'admin' | 'member' = 'member'
-    ): Promise<GroupMember> {
-        const { data, error } = await supabase
-            .from('group_members')
-            .insert({ group_id: groupId, user_id: userId, role })
-            .select()
-            .single()
-
-        if (error) throw error
-        return data as GroupMember
+    async getGroupMembers(groupId: string): Promise<GroupMember[]> {
+        const members = await queryDocs<GroupMember>('group_members', where('group_id', '==', groupId))
+        const profiles = await fetchProfilesMap(members.map((member) => member.user_id))
+        return members
+            .map((member) => ({ ...member, profile: profiles.get(member.user_id) }))
+            .sort((a, b) => a.joined_at.localeCompare(b.joined_at))
     },
 
-    async updateGroupMemberRole(
-        groupId: string,
-        userId: string,
-        role: 'owner' | 'admin' | 'member'
-    ): Promise<GroupMember> {
-        const { data, error } = await supabase
-            .from('group_members')
-            .update({ role })
-            .eq('group_id', groupId)
-            .eq('user_id', userId)
-            .select('*, profile:profiles(*)')
-            .single()
-
-        if (error) throw error
-        return data as GroupMember
+    async getMemberCounts(groupIds: string[]): Promise<Record<string, number>> {
+        const groups = await getManyByIds<Group>('groups', groupIds)
+        return Object.fromEntries(groups.map((group) => [group.id, group.member_ids?.length ?? 0]))
     },
 
-    /**
-     * Remove a member from a group.
-     */
+    async createGroup(groupData: { name: string; description: string | null; created_by: string }): Promise<Group> {
+        const now = nowIso()
+        const group: Group = {
+            id: newId(),
+            name: groupData.name.trim(),
+            description: groupData.description?.trim() || null,
+            avatar_url: null,
+            created_by: groupData.created_by,
+            member_ids: [groupData.created_by],
+            created_at: now,
+            updated_at: now,
+        }
+
+        const batch = writeBatch(db)
+        const { id, ...data } = group
+        batch.set(doc(db, 'groups', id), data)
+        batch.set(doc(db, 'group_members', memberDocId(id, groupData.created_by)), {
+            group_id: id,
+            user_id: groupData.created_by,
+            role: 'owner',
+            joined_at: now,
+        })
+        await batch.commit()
+        return group
+    },
+
+    async addGroupMember(groupId: string, userId: string, role: GroupRole = 'member'): Promise<GroupMember> {
+        const member = { group_id: groupId, user_id: userId, role, joined_at: nowIso() }
+        const batch = writeBatch(db)
+        batch.set(doc(db, 'group_members', memberDocId(groupId, userId)), member)
+        batch.update(doc(db, 'groups', groupId), { member_ids: arrayUnion(userId), updated_at: nowIso() })
+        await batch.commit()
+        return { id: memberDocId(groupId, userId), ...member }
+    },
+
+    async updateGroupMemberRole(groupId: string, userId: string, role: GroupRole): Promise<GroupMember> {
+        const ref = doc(db, 'group_members', memberDocId(groupId, userId))
+        await updateDoc(ref, { role })
+        const snap = await getDoc(ref)
+        const profiles = await fetchProfilesMap([userId])
+        return { id: snap.id, ...(snap.data() as Omit<GroupMember, 'id'>), profile: profiles.get(userId) }
+    },
+
     async removeGroupMember(groupId: string, userId: string): Promise<void> {
-        const { error } = await supabase
-            .from('group_members')
-            .delete()
-            .eq('group_id', groupId)
-            .eq('user_id', userId)
-
-        if (error) throw error
+        const batch = writeBatch(db)
+        batch.delete(doc(db, 'group_members', memberDocId(groupId, userId)))
+        batch.update(doc(db, 'groups', groupId), { member_ids: arrayRemove(userId), updated_at: nowIso() })
+        await batch.commit()
     },
 
-    /**
-     * Delete a group.
-     */
+    /** Only the owner can delete a group. Its memberships go with it. */
     async deleteGroup(groupId: string): Promise<void> {
-        const { error } = await supabase
-            .from('groups')
-            .delete()
-            .eq('id', groupId)
-
-        if (error) throw error
+        const members = await queryDocs<GroupMember>('group_members', where('group_id', '==', groupId))
+        const me = auth.currentUser?.uid
+        const batch = writeBatch(db)
+        // The owner's own membership goes last: rules read it to authorize the rest.
+        for (const member of members) if (member.user_id !== me) batch.delete(doc(db, 'group_members', member.id))
+        await batch.commit()
+        const finalBatch = writeBatch(db)
+        finalBatch.delete(doc(db, 'groups', groupId))
+        if (me) finalBatch.delete(doc(db, 'group_members', memberDocId(groupId, me)))
+        await finalBatch.commit()
     },
 
-    /**
-     * Check if a user is a member of a group.
-     */
     async isMember(groupId: string, userId: string): Promise<boolean> {
-        const { count, error } = await supabase
-            .from('group_members')
-            .select('*', { count: 'exact', head: true })
-            .eq('group_id', groupId)
-            .eq('user_id', userId)
-
-        if (error) throw error
-        return (count ?? 0) > 0
+        const group = await getById<Group>('groups', groupId).catch(() => null)
+        return !!group?.member_ids?.includes(userId)
     },
 
-    /**
-     * Generate an invite link token for a group (owner/admin only, enforced by RLS).
-     * Tokens are random UUID-based strings and expire after `expiresInDays`.
-     */
+    /** Invite link token (owner/admin only, enforced by the rules). */
     async createInviteToken(groupId: string, createdBy: string, expiresInDays = 7): Promise<string> {
-        const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-            ? crypto.randomUUID().replace(/-/g, '')
-            : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
-        const expiresAt = new Date(Date.now() + expiresInDays * 86_400_000).toISOString()
-        const { data, error } = await supabase
-            .from('group_invite_tokens')
-            .insert({ group_id: groupId, token: random, created_by: createdBy, expires_at: expiresAt })
-            .select('token')
-            .single()
-        if (error) throw error
-        return (data as { token: string }).token
+        const token = crypto.randomUUID().replace(/-/g, '')
+        await writeBatch(db)
+            .set(doc(db, 'group_invite_tokens', token), {
+                group_id: groupId,
+                created_by: createdBy,
+                created_at: nowIso(),
+                expires_at: new Date(Date.now() + expiresInDays * 86_400_000).toISOString(),
+                expires_at_ms: Date.now() + expiresInDays * 86_400_000,
+            })
+            .commit()
+        return token
     },
 
-    /**
-     * Join a group with an invite token. Validation and the membership insert happen
-     * server-side in `join_group_with_invite` (migration 015) because invitees cannot
-     * insert into group_members themselves. Returns the joined group id.
-     */
+    /** Join a group with an invite token. Returns the group id. */
     async joinWithToken(token: string): Promise<string> {
-        const { data, error } = await supabase.rpc('join_group_with_invite', { p_token: token })
-        if (error) {
-            const raw = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase()
-            if (raw.includes('expired')) throw new Error('La invitación ha caducado. Pide un enlace nuevo.')
-            if (raw.includes('invalid')) throw new Error('El enlace de invitación no es válido.')
-            if (isMissingFunctionError(error)) {
-                throw new Error('El servidor aún no admite enlaces de invitación (falta la migración 015).')
-            }
-            throw error
-        }
-        return data as string
+        const userId = auth.currentUser?.uid
+        if (!userId) throw new Error('Necesitas iniciar sesión.')
+
+        const invite = await getById<{ group_id: string; expires_at: string }>('group_invite_tokens', token).catch(() => null)
+        if (!invite) throw new Error('El enlace de invitación no es válido.')
+        if (new Date(invite.expires_at).getTime() < Date.now()) throw new Error('La invitación ha caducado. Pide un enlace nuevo.')
+
+        const existing = await getDoc(doc(db, 'group_members', memberDocId(invite.group_id, userId))).catch(() => null)
+        if (existing?.exists()) return invite.group_id
+
+        const batch = writeBatch(db)
+        batch.set(doc(db, 'group_members', memberDocId(invite.group_id, userId)), {
+            group_id: invite.group_id,
+            user_id: userId,
+            role: 'member',
+            joined_at: nowIso(),
+            invite_token: token,
+        })
+        batch.update(doc(db, 'groups', invite.group_id), { member_ids: arrayUnion(userId), updated_at: nowIso() })
+        await batch.commit()
+        return invite.group_id
     },
 
-    /**
-     * Leave a group. Owners cannot leave (they must delete the group or transfer ownership).
-     */
+    /** Owners cannot leave (they must delete the group). */
     async leaveGroup(groupId: string): Promise<void> {
-        const { error } = await supabase.rpc('leave_group', { p_group_id: groupId })
-        if (!error) return
-        if (!isMissingFunctionError(error)) {
-            const raw = `${error.message ?? ''}`.toLowerCase()
-            if (raw.includes('owner')) throw new Error('El propietario no puede salir del grupo. Elimínalo o cede la propiedad.')
-            throw error
-        }
-        // Fallback for environments without migration 015 (works for admins only).
-        const { data: session } = await supabase.auth.getSession()
-        const userId = session.session?.user.id
+        const userId = auth.currentUser?.uid
         if (!userId) throw new Error('Sesión no válida')
+        const role = await this.getMyRole(groupId, userId)
+        if (role === 'owner') throw new Error('El propietario no puede salir del grupo. Elimínalo o cede la propiedad.')
         await this.removeGroupMember(groupId, userId)
     },
 
-    async getMyRole(groupId: string, userId: string): Promise<'owner' | 'admin' | 'member' | null> {
-        const { data, error } = await supabase
-            .from('group_members')
-            .select('role')
-            .eq('group_id', groupId)
-            .eq('user_id', userId)
-            .maybeSingle()
-
-        if (error) throw error
-        return (data?.role as 'owner' | 'admin' | 'member' | undefined) ?? null
+    async getMyRole(groupId: string, userId: string): Promise<GroupRole | null> {
+        const member = await getById<GroupMember>('group_members', memberDocId(groupId, userId)).catch(() => null)
+        return member?.role ?? null
     },
-}
-
-function isDuplicateError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''}`.toLowerCase()
-    return raw.includes('23505') || raw.includes('duplicate key') || raw.includes('already exists')
-}
-
-function isMissingFunctionError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string; hint?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''} ${anyError.hint ?? ''}`.toLowerCase()
-    return raw.includes('42883') || raw.includes('pgrst202') || raw.includes('function') && raw.includes('does not exist')
-}
-
-function extractRpcGroup(data: unknown): Group | null {
-    if (Array.isArray(data)) {
-        return (data[0] ?? null) as Group | null
-    }
-    if (data && typeof data === 'object') {
-        return data as Group
-    }
-    return null
 }

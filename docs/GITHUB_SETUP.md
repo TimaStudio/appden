@@ -64,7 +64,7 @@ Create labels:
 - `priority:low`
 - `area:player`
 - `area:auth`
-- `area:supabase`
+- `area:firebase`
 - `area:ui`
 
 ## 7) Milestones

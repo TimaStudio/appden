@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Clock, LogIn } from 'lucide-react'
-import { authService } from '@services/auth.service'
+import { authErrorMessage, authService } from '@services/auth.service'
+import { GoogleButton } from '@components/layout/GoogleButton'
 import { useAuthStore } from '@app/store/auth.store'
 import { loginSchema, type LoginFormData } from '@lib/validators'
 import { useToast } from '@components/ui/Toast'
@@ -19,6 +20,7 @@ const LoginPage: React.FC = () => {
     const { error: toastError } = useToast()
     const { isAuthenticated, isInitialized } = useAuth()
     const [isRepairing, setIsRepairing] = useState(false)
+    const [isGoogleLoading, setIsGoogleLoading] = useState(false)
     const notice = useAuthStore((state) => state.notice)
     const setNotice = useAuthStore((state) => state.setNotice)
 
@@ -44,16 +46,19 @@ const LoginPage: React.FC = () => {
             await authService.login(data.email.trim(), data.password)
             // Navigation happens in the effect above once AuthProvider has loaded the profile.
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'Error al iniciar sesión'
-            if (msg.includes('Invalid login credentials')) {
-                toastError('Email o contraseña incorrectos')
-            } else if (msg.includes('Failed to fetch') || msg.toLowerCase().includes('network') || msg.includes('timeout')) {
-                toastError('Sin conexión', 'No pudimos contactar con el servidor. Revisa tu conexión.')
-            } else if (msg.includes('not confirmed')) {
-                toastError('Confirma tu email', 'Te enviamos un enlace al registrarte. Revisa también la carpeta de spam.')
-            } else {
-                toastError('No se pudo iniciar sesión', msg)
-            }
+            toastError('No se pudo iniciar sesión', authErrorMessage(err))
+        }
+    }
+
+    const handleGoogle = async () => {
+        setNotice(null)
+        setIsGoogleLoading(true)
+        try {
+            await authService.loginWithGoogle()
+        } catch (err: unknown) {
+            toastError('No se pudo entrar con Google', authErrorMessage(err))
+        } finally {
+            setIsGoogleLoading(false)
         }
     }
 
@@ -144,6 +149,8 @@ const LoginPage: React.FC = () => {
                     )}
                 </button>
             </form>
+
+            <GoogleButton onClick={handleGoogle} loading={isGoogleLoading} />
         </AuthShell>
     )
 }

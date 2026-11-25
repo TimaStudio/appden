@@ -1,16 +1,14 @@
 // ============================================================
 // The Appden — media storage on Cloudflare R2 (zero egress fees).
 //
-// Supabase keeps the database and auth; every file (audio, covers,
+// Firebase keeps auth and the database; every file (audio, covers,
 // avatars, documents, receipts) lives in one R2 bucket under the key
-// `<supabase bucket>/<original path>`, so database rows don't change.
+// `<bucket>/<path>`, the same path stored in Firestore.
 //
-//   POST   /sign            {keys: string[]}  (Bearer <supabase jwt>) → signed GET URLs
+//   POST   /sign            {keys: string[]}  (Bearer <Firebase ID token>) → signed GET URLs
 //   GET    /f/<key>?e=&s=   signed download, supports Range (audio seeking on iOS)
-//   PUT    /f/<key>         upload            (Bearer <supabase jwt>)
-//   DELETE /f/<key>         delete            (Bearer <supabase jwt>)
-//   PUT    /admin/f/<key>   migration upload  (x-admin-secret)
-//   HEAD   /admin/f/<key>   migration exists  (x-admin-secret)
+//   PUT    /f/<key>         upload            (Bearer <Firebase ID token>)
+//   DELETE /f/<key>         delete            (Bearer <Firebase ID token>)
 // ============================================================
 
 interface R2Range {
@@ -37,14 +35,10 @@ interface R2BucketLike {
 
 interface Env {
     BUCKET: R2BucketLike
-    SUPABASE_URL: string
-    SUPABASE_ANON_KEY: string
+    /** Firebase project id: ID tokens must be issued for it. */
+    FIREBASE_PROJECT_ID: string
     /** HMAC secret for signed download URLs (any long random string). */
     SIGNING_SECRET: string
-    /** Secret for the one-off migration script. */
-    ADMIN_SECRET: string
-    /** Optional: legacy HS256 JWT secret (Supabase → Settings → API). Avoids a call to Supabase per new session. */
-    SUPABASE_JWT_SECRET?: string
     /** Comma separated list of allowed origins, or "*". */
     ALLOWED_ORIGINS?: string
     /** Max upload size in MB (default 60). */
@@ -52,7 +46,8 @@ interface Env {
 }
 
 const GROUP_BUCKETS = new Set(['songs', 'covers', 'files'])
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// Group ids: imported UUIDs and new Firestore-style random ids.
+const GROUP_ID_RE = /^[0-9A-Za-z-]{16,40}$/
 const DAY = 86_400
 
 // Per-isolate caches (Workers reuse isolates between requests).
@@ -71,8 +66,6 @@ export default {
             if (url.pathname === '/health') return json({ ok: true }, 200, cors)
 
             if (url.pathname === '/sign' && request.method === 'POST') return await handleSign(request, env, cors)
-
-            if (url.pathname.startsWith('/admin/f/')) return await handleAdmin(request, env, cors, decodeKey(url.pathname.slice('/admin/f/'.length)))
 
             if (url.pathname.startsWith('/f/')) {
                 const key = decodeKey(url.pathname.slice(3))
@@ -178,26 +171,6 @@ async function handleDelete(request: Request, env: Env, cors: Headers, key: stri
     return json({ key }, 200, cors)
 }
 
-async function handleAdmin(request: Request, env: Env, cors: Headers, key: string | null): Promise<Response> {
-    if (!env.ADMIN_SECRET || request.headers.get('x-admin-secret') !== env.ADMIN_SECRET) throw new HttpError(401, 'No autorizado')
-    if (!key) throw new HttpError(400, 'Clave no válida')
-
-    if (request.method === 'HEAD') {
-        const object = await env.BUCKET.head(key)
-        return new Response(null, { status: object ? 200 : 404, headers: cors })
-    }
-    if (request.method === 'PUT') {
-        await env.BUCKET.put(key, request.body, {
-            httpMetadata: {
-                contentType: request.headers.get('content-type') || 'application/octet-stream',
-                cacheControl: 'private, max-age=31536000, immutable',
-            },
-        })
-        return json({ key }, 200, cors)
-    }
-    throw new HttpError(405, 'Método no permitido')
-}
-
 // ------------------------------------------------------------
 // Authorization
 // ------------------------------------------------------------
@@ -205,10 +178,10 @@ async function handleAdmin(request: Request, env: Env, cors: Headers, key: strin
 /** Group-scoped buckets use `<groupId>/...` paths: only members may read them. */
 async function canRead(key: string, userId: string, token: string, env: Env): Promise<boolean> {
     const [bucket, first] = key.split('/')
-    if (GROUP_BUCKETS.has(bucket) && first && UUID_RE.test(first)) {
+    if (GROUP_BUCKETS.has(bucket) && first && GROUP_ID_RE.test(first)) {
         return isGroupMember(first, userId, token, env)
     }
-    return true // avatars, report images, receipts: any signed-in user.
+    return true // avatars, report images: any signed-in user.
 }
 
 /** Uploads must live under the uploader's own folder (generateStoragePath puts the user id in the path). */
@@ -221,23 +194,30 @@ function ownsKey(key: string, userId: string): boolean {
     return key.split('/').includes(userId)
 }
 
+/**
+ * Reads `group_members/{groupId}_{userId}` through the Firestore REST API with the
+ * user's own token, so the security rules decide (404 = not a member).
+ */
 async function isGroupMember(groupId: string, userId: string, token: string, env: Env): Promise<boolean> {
     const cacheKey = `${userId}:${groupId}`
     const cached = memberCache.get(cacheKey)
     if (cached && cached.until > Date.now()) return cached.ok
 
     const response = await fetch(
-        `${env.SUPABASE_URL}/rest/v1/group_members?select=user_id&group_id=eq.${groupId}&user_id=eq.${userId}&limit=1`,
-        { headers: { apikey: env.SUPABASE_ANON_KEY, authorization: `Bearer ${token}` } }
+        `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/group_members/${encodeURIComponent(`${groupId}_${userId}`)}`,
+        { headers: { authorization: `Bearer ${token}` } }
     )
-    const ok = response.ok && ((await response.json()) as unknown[]).length > 0
+    const ok = response.ok
     memberCache.set(cacheKey, { ok, until: Date.now() + (ok ? 10 : 1) * 60_000 })
+    if (memberCache.size > 1000) memberCache.clear()
     return ok
 }
 
 // ------------------------------------------------------------
-// Supabase session verification
+// Firebase ID token verification
 // ------------------------------------------------------------
+
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
 
 async function authenticate(request: Request, env: Env): Promise<string> {
     const token = bearer(request)
@@ -246,54 +226,40 @@ async function authenticate(request: Request, env: Env): Promise<string> {
     const cached = tokenCache.get(token)
     if (cached && cached.until > Date.now()) return cached.userId
 
-    const local = await verifyJwtLocally(token, env).catch(() => null)
-    if (local) {
-        tokenCache.set(token, { userId: local.sub, until: Math.min(local.exp * 1000, Date.now() + 10 * 60_000) })
-        return local.sub
-    }
+    const verified = await verifyFirebaseToken(token, env).catch(() => null)
+    if (!verified) throw new HttpError(401, 'Sesión no válida')
 
-    // Fallback: ask Supabase Auth (a ~1 KB response, cached for 5 minutes).
-    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-        headers: { apikey: env.SUPABASE_ANON_KEY, authorization: `Bearer ${token}` },
-    })
-    if (!response.ok) throw new HttpError(401, 'Sesión no válida')
-    const user = (await response.json()) as { id?: string }
-    if (!user.id) throw new HttpError(401, 'Sesión no válida')
-    tokenCache.set(token, { userId: user.id, until: Date.now() + 5 * 60_000 })
+    tokenCache.set(token, { userId: verified.sub, until: Math.min(verified.exp * 1000, Date.now() + 10 * 60_000) })
     if (tokenCache.size > 500) tokenCache.clear()
-    return user.id
+    return verified.sub
 }
 
-async function verifyJwtLocally(token: string, env: Env): Promise<{ sub: string; exp: number } | null> {
+async function verifyFirebaseToken(token: string, env: Env): Promise<{ sub: string; exp: number } | null> {
     const [headerPart, payloadPart, signaturePart] = token.split('.')
     if (!headerPart || !payloadPart || !signaturePart) return null
     const header = JSON.parse(textFromBase64Url(headerPart)) as { alg?: string; kid?: string }
-    const payload = JSON.parse(textFromBase64Url(payloadPart)) as { sub?: string; exp?: number; role?: string }
-    if (!payload.sub || !payload.exp || payload.exp * 1000 < Date.now() || payload.role !== 'authenticated') return null
+    const payload = JSON.parse(textFromBase64Url(payloadPart)) as { sub?: string; exp?: number; iat?: number; aud?: string; iss?: string }
 
-    const data = new TextEncoder().encode(`${headerPart}.${payloadPart}`)
-    const signature = bytesFromBase64Url(signaturePart)
+    const now = Math.floor(Date.now() / 1000)
+    if (header.alg !== 'RS256' || !header.kid) return null
+    if (!payload.sub || !payload.exp || payload.exp < now || (payload.iat ?? 0) > now + 300) return null
+    if (payload.aud !== env.FIREBASE_PROJECT_ID || payload.iss !== `https://securetoken.google.com/${env.FIREBASE_PROJECT_ID}`) return null
 
-    if (header.alg === 'HS256' && env.SUPABASE_JWT_SECRET) {
-        const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.SUPABASE_JWT_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
-        return (await crypto.subtle.verify('HMAC', key, signature, data)) ? { sub: payload.sub, exp: payload.exp } : null
-    }
-
-    if (header.alg === 'ES256' || header.alg === 'RS256') {
-        const jwk = (await loadJwks(env)).find((candidate) => (candidate as { kid?: string }).kid === header.kid)
-        if (!jwk) return null
-        const algorithm = header.alg === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' } : { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }
-        const key = await crypto.subtle.importKey('jwk', jwk, algorithm, false, ['verify'])
-        const verifyAlgorithm = header.alg === 'ES256' ? { name: 'ECDSA', hash: 'SHA-256' } : { name: 'RSASSA-PKCS1-v1_5' }
-        return (await crypto.subtle.verify(verifyAlgorithm, key, signature, data)) ? { sub: payload.sub, exp: payload.exp } : null
-    }
-
-    return null
+    const jwk = (await loadJwks()).find((candidate) => (candidate as { kid?: string }).kid === header.kid)
+    if (!jwk) return null
+    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
+    const valid = await crypto.subtle.verify(
+        { name: 'RSASSA-PKCS1-v1_5' },
+        key,
+        bytesFromBase64Url(signaturePart),
+        new TextEncoder().encode(`${headerPart}.${payloadPart}`)
+    )
+    return valid ? { sub: payload.sub, exp: payload.exp } : null
 }
 
-async function loadJwks(env: Env): Promise<JsonWebKey[]> {
+async function loadJwks(): Promise<JsonWebKey[]> {
     if (jwksCache && jwksCache.until > Date.now()) return jwksCache.keys
-    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`)
+    const response = await fetch(GOOGLE_JWKS_URL)
     const keys = response.ok ? (((await response.json()) as { keys?: JsonWebKey[] }).keys ?? []) : []
     jwksCache = { keys, until: Date.now() + 60 * 60_000 }
     return keys
@@ -362,7 +328,7 @@ function corsHeaders(request: Request, env: Env): Headers {
     const origin = request.headers.get('origin') ?? ''
     const headers = new Headers({
         'access-control-allow-methods': 'GET, HEAD, PUT, POST, DELETE, OPTIONS',
-        'access-control-allow-headers': 'authorization, content-type, range, x-admin-secret',
+        'access-control-allow-headers': 'authorization, content-type, range',
         'access-control-expose-headers': 'content-range, content-length, accept-ranges, etag',
         'access-control-max-age': '86400',
         vary: 'origin',

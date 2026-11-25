@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { CheckCircle2, MailCheck } from 'lucide-react'
-import { authService } from '@services/auth.service'
+import { authErrorMessage, authService } from '@services/auth.service'
 import {
     resetPasswordSchema,
     updatePasswordSchema,
@@ -16,82 +16,60 @@ import { ROUTES } from '@lib/constants'
 
 type Mode = 'checking' | 'request' | 'sent' | 'update' | 'updated'
 
-function isRecoveryUrl(): boolean {
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+/** Code from a Firebase password reset link (`?mode=resetPassword&oobCode=…`). */
+function resetCodeFromUrl(): string | null {
     const query = new URLSearchParams(window.location.search)
-    return hash.get('type') === 'recovery' || query.get('recovery') === '1' || query.has('code')
-}
-
-function recoveryLinkError(): string | null {
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-    const query = new URLSearchParams(window.location.search)
-    return hash.get('error_description') ?? query.get('error_description')
+    return query.get('mode') === 'resetPassword' ? query.get('oobCode') : null
 }
 
 const ResetPasswordPage: React.FC = () => {
     const navigate = useNavigate()
     const { error: toastError } = useToast()
-    const [mode, setMode] = useState<Mode>('checking')
+    const [resetCode] = useState(resetCodeFromUrl)
+    const [mode, setMode] = useState<Mode>(resetCode ? 'checking' : 'request')
 
     const requestForm = useForm<ResetPasswordFormData>({ resolver: zodResolver(resetPasswordSchema) })
     const updateForm = useForm<UpdatePasswordFormData>({ resolver: zodResolver(updatePasswordSchema) })
 
     useEffect(() => {
+        if (!resetCode) return
         let cancelled = false
-        const linkError = recoveryLinkError()
-        if (linkError) {
-            toastError('El enlace no es válido o ha caducado', 'Pide uno nuevo desde aquí.')
-            setMode('request')
-            return
-        }
-
-        const { data } = authService.subscribe((event) => {
-            if (event === 'PASSWORD_RECOVERY' && !cancelled) setMode('update')
-        })
-
-        void authService
-            .getSession()
-            .then((session) => {
-                if (cancelled) return
-                const recovering = authService.consumePasswordRecovery() || (isRecoveryUrl() && !!session)
-                setMode(recovering ? 'update' : 'request')
+        authService
+            .verifyResetCode(resetCode)
+            .then(() => {
+                if (!cancelled) setMode('update')
             })
             .catch(() => {
-                if (!cancelled) setMode('request')
+                if (cancelled) return
+                toastError('El enlace no es válido o ha caducado', 'Pide uno nuevo desde aquí.')
+                setMode('request')
             })
-
         return () => {
             cancelled = true
-            data.subscription.unsubscribe()
         }
-    }, [toastError])
+    }, [resetCode, toastError])
 
     const onRequestSubmit = async (data: ResetPasswordFormData) => {
         try {
             await authService.resetPassword(data.email.trim())
             setMode('sent')
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : ''
-            if (msg.toLowerCase().includes('rate')) {
-                toastError('Demasiados intentos', 'Espera un minuto antes de pedir otro enlace.')
+            // Don't reveal whether the email has an account.
+            if (err instanceof Error && err.message.includes('user-not-found')) {
+                setMode('sent')
                 return
             }
-            toastError('No se pudo enviar el email', msg || undefined)
+            toastError('No se pudo enviar el email', authErrorMessage(err))
         }
     }
 
     const onUpdateSubmit = async (data: UpdatePasswordFormData) => {
+        if (!resetCode) return
         try {
-            await authService.updatePassword(data.password)
-            await authService.logout().catch(() => undefined)
+            await authService.confirmReset(resetCode, data.password)
             setMode('updated')
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : ''
-            if (msg.toLowerCase().includes('different from the old')) {
-                toastError('Usa una contraseña distinta', 'La nueva contraseña no puede ser igual a la anterior.')
-                return
-            }
-            toastError('No se pudo actualizar la contraseña', msg || 'El enlace puede haber caducado. Pide uno nuevo.')
+            toastError('No se pudo actualizar la contraseña', authErrorMessage(err))
         }
     }
 
@@ -125,7 +103,7 @@ const ResetPasswordPage: React.FC = () => {
             >
                 <div className="card flex items-center gap-3 p-4">
                     {sent ? <MailCheck className="h-6 w-6 shrink-0 text-brand-300" /> : <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-300" />}
-                    <p className="text-sm text-gray-300">{sent ? 'El enlace caduca en una hora.' : 'Por seguridad hemos cerrado la sesión de recuperación.'}</p>
+                    <p className="text-sm text-gray-300">{sent ? 'El enlace caduca en una hora.' : 'Ya puedes usarla en todos tus dispositivos.'}</p>
                 </div>
                 {!sent ? (
                     <button type="button" onClick={() => navigate(ROUTES.LOGIN, { replace: true })} className="btn-primary mt-4 w-full !min-h-[3.25rem]">

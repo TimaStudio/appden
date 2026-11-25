@@ -3,7 +3,8 @@
 
 # Critical areas
 /src/services/ @albertomanana
-/src/lib/supabase/ @albertomanana
-/supabase/ @albertomanana
+/src/lib/firebase/ @albertomanana
+/firestore.rules @albertomanana
+/r2-worker/ @albertomanana
 /vite.config.ts @albertomanana
 /package.json @albertomanana

@@ -5,7 +5,7 @@
 1. Clone repository.
 2. Install Node 20.
 3. Run `npm ci`.
-4. Copy `.env.example` to `.env.local` and fill Supabase keys.
+4. No env file is needed: the app defaults to the production Firebase project (override with `.env.local`).
 5. Run `npm run dev`.
 6. Read:
    - `README.md`
@@ -32,5 +32,5 @@
 - The Appden runs on `http://127.0.0.1:4173`.
 - Do not reuse the CarCare development server or its port (`5173`).
 - If the app remains on the session loading screen, check the browser console and
-  verify that Supabase session, profile, and group bootstrap requests finish or
+  verify that the Firebase session, profile, and group bootstrap requests finish or
   time out instead of waiting indefinitely.

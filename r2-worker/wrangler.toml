@@ -1,4 +1,4 @@
-# Cloudflare Worker that serves The Appden media from R2 (see docs/R2_SETUP.md).
+# Cloudflare Worker that serves The Appden media from R2.
 name = "appden-storage"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
@@ -8,15 +8,10 @@ binding = "BUCKET"
 bucket_name = "appden-media"
 
 [vars]
-# Your Supabase project URL, e.g. https://abcd.supabase.co
-SUPABASE_URL = "https://lgcvoompsljknhpwsusg.supabase.co"
-# Public anon key (same value as VITE_SUPABASE_ANON_KEY)
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxnY3Zvb21wc2xqa25ocHdzdXNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3ODgyOTksImV4cCI6MjA4ODM2NDI5OX0.2Ii71UJrk8t812UZdLhnR8Khwp6uUfeCazpkPfD45U0"
-# Comma separated origins allowed to call the worker, e.g. "https://appden.vercel.app,http://127.0.0.1:4173"
-ALLOWED_ORIGINS = "*"
+FIREBASE_PROJECT_ID = "appdenski"
+# Origins allowed to call the worker.
+ALLOWED_ORIGINS = "http://127.0.0.1:4173,http://localhost:4173,https://the-appden.vercel.app,https://appdenski.web.app,https://appdenski.firebaseapp.com,https://appdenski.tmst.es"
 MAX_UPLOAD_MB = "60"
 
-# Secrets (never commit them) — set with:
+# Secret (never commit it) — set with:
 #   npx wrangler secret put SIGNING_SECRET
-#   npx wrangler secret put ADMIN_SECRET
-#   npx wrangler secret put SUPABASE_JWT_SECRET   (optional, legacy HS256 projects)

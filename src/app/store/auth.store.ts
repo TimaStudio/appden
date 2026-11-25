@@ -18,7 +18,7 @@ interface AuthState {
 
 /**
  * Auth store - holds the current authenticated user + session state.
- * Initialized once in AuthProvider on app boot via Supabase auth listener.
+ * Initialized once in AuthProvider on app boot via the Firebase auth listener.
  */
 export const useAuthStore = create<AuthState>()((set) => ({
     user: null,

@@ -15,7 +15,7 @@ const notificationsKey = (userId: string | null) => ['notifications', userId] as
 const unreadKey = (userId: string | null) => ['notifications-unread', userId] as const
 
 /**
- * Persisted notifications (Supabase `notifications` table) plus a toast shim.
+ * Persisted notifications (Firestore `notifications` collection) plus a toast shim.
  *
  * `addNotification` used to push transient feedback into a list nobody saw;
  * it now shows a toast so every caller gives visible feedback.
@@ -101,8 +101,8 @@ export function useNotifications(_options: UseNotificationsOptions = {}) {
 }
 
 /**
- * Unread counter for the header bell. Polls a HEAD count (no rows transferred) every
- * 3 minutes while the app is visible, so it barely touches the Supabase egress quota.
+ * Unread counter for the header bell. Polls a count query (billed as one read) every
+ * 3 minutes while the app is visible, so it barely touches the Firestore daily quota.
  */
 export function useUnreadNotificationsCount(): number {
     const { userId } = useAuth()

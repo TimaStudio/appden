@@ -1,4 +1,7 @@
-﻿# App Context
+# App Context
+
+> Historical note: written while the app ran on Supabase. Since 2026-11-25 the app uses
+> Firebase (Auth + Firestore) and Cloudflare R2; see `agent-context/FIREBASE_CONTEXT.md`.
 
 Snapshot date: 2026-04-07
 
@@ -7,26 +10,14 @@ Snapshot date: 2026-04-07
 - The Appden is a separate project from CarCare.
 - Run it from `C:\Users\Alberto\Desktop\The Appden` on
   `http://127.0.0.1:4173`; CarCare uses port `5173`.
-- The startup screen must not remain blocked by an unavailable Supabase
+- The startup screen must not remain blocked by an unavailable Firebase
   connection. Auth session, profile, and group bootstrap requests have bounded
   timeouts and must fall back to the logged-out or empty-groups state.
 
-## Planned media storage migration
+## Backend (since 2026-11-25)
 
-- Keep Supabase for Auth, PostgreSQL, groups, permissions, and song metadata.
-- Plan a future migration of audio files, WAVs, covers, and other large media
-  from Supabase Storage to Cloudflare R2.
-- Cloudflare R2 is the preferred candidate because its free tier provides
-  substantially more object storage than Supabase Free and does not charge
-  egress in the usual download flow. Backblaze B2 is the secondary candidate.
-- The migration must use a private bucket and server-side signed upload/download
-  URLs. R2 credentials must never be exposed in React or browser-delivered
-  environment variables.
-- The future implementation should add a Vercel serverless API for signed URLs,
-  upload directly from the browser to R2, persist the R2 object key in
-  Supabase, and generate temporary playback URLs.
-- Revisit the current 50 MB audio validation only after the external storage
-  provider and its upload limits are configured.
+- Firebase Authentication + Cloud Firestore (project `appdenski`) and Cloudflare R2 through the
+  `appden-storage` Worker. Details in `agent-context/FIREBASE_CONTEXT.md`.
 
 ## Visual identity (Kreivo restyle, 2026-11-05)
 
@@ -58,7 +49,7 @@ The Appden is a private PWA for friend groups to:
 
 Core principles:
 
-- private-by-default data model with Supabase RLS
+- private-by-default data model with Firestore security rules
 - mobile-first usage
 - group-scoped collaboration
 
@@ -68,7 +59,7 @@ Core principles:
 - Styling: TailwindCSS + shared design tokens in `src/styles/globals.css`
 - State: Zustand + React Query
 - Routing: React Router
-- Backend: Supabase (Auth, Postgres, Storage)
+- Backend: Firebase (Auth, Firestore) + Cloudflare R2 (files)
 - PWA: `vite-plugin-pwa`
 - Motion: `framer-motion`
 - Audio engine: single global HTML audio path via `src/features/player`
@@ -79,8 +70,7 @@ Core principles:
 
 - `src/app/providers/AuthProvider.tsx`
 - `src/services/auth.service.ts`
-- session storage key includes Supabase project ref:
-  - `the-appden-auth:<projectRef>:v2`
+- session persisted by Firebase Auth (IndexedDB); unapproved accounts are signed out with a notice
 - v1.5.3 hardening:
   - if group loading fails during bootstrap, keep authenticated session and fallback to empty groups (avoid forced re-login loops)
 

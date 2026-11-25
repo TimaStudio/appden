@@ -1,4 +1,4 @@
-﻿# Repo Map
+# Repo Map
 
 Snapshot date: 2026-04-07
 
@@ -12,9 +12,8 @@ Snapshot date: 2026-04-07
   - `docs/QA_PRELAUNCH_AUDIT.md`
   - `docs/QA_FUNCTIONAL_MAP.md`
   - `docs/QA_TEST_CHECKLIST.md`
-  - `docs/QA_SEEDING_GUIDE.md`
-- `supabase/migrations/*`: DB schema and feature migrations
-- `supabase-storage-setup.sql`: storage bucket/policy setup script
+- `firestore.rules`, `firestore.indexes.json`: Firestore security rules and indexes
+- `r2-worker/`: Cloudflare Worker serving files from R2
 - `agent-context/*`: persistent cross-IDE/cross-agent context pack
 - `src/*`: application code
 
@@ -120,32 +119,13 @@ Compatibility wrappers (redirect to feature modules):
   - `src/pages/NotificationsPage.tsx`
   - `src/pages/SharedPage.tsx`
 
-## Supabase and schema
+## Firebase and data
 
-- client config:
-  - `src/lib/supabase/client.ts`
-- schema/migrations:
-  - `supabase/migrations/001_initial_schema.sql`
-  - `supabase/migrations/002_song_lyrics_social.sql`
-  - `supabase/migrations/003_lyrics_social_pro_features.sql`
-  - `supabase/migrations/004_debts_pro_retention_admin.sql`
-  - `supabase/migrations/005_social_friends_song_owners.sql`
-  - `supabase/migrations/006_changelog_reports_social_hardening.sql`
-  - `supabase/migrations/007_group_invitations.sql`
-  - `supabase/migrations/008_fix_rls_groups_recursion.sql`
-  - `supabase/migrations/009_social_connections_reports_admin.sql`
-  - `supabase/migrations/010_groups_rls_rpc_hardening.sql`
-  - `supabase/migrations/011_song_upload_storage_hardening.sql`
-  - `supabase/migrations/012_song_artist_credits.sql`
-- changelog automation:
-  - `scripts/generate-changelog-from-git.mjs`
-  - QA seed system:
-    - `scripts/qa-seed/shared.mjs`
-    - `scripts/qa-seed/reset.mjs`
-    - `scripts/qa-seed/fixtures.mjs`
-    - `scripts/qa-seed/seed.mjs`
-  - `.github/workflows/changelog-develop.yml`
-  - `public/changelog.generated.json`
+- client: `src/lib/firebase/client.ts` (app, auth, Firestore, R2 signed URLs)
+- helpers: `src/lib/firebase/db.ts` (ids, batched profile loading, notifications)
+- rules and indexes: `firestore.rules`, `firestore.indexes.json`
+- storage Worker: `r2-worker/src/index.ts`
+- details: `agent-context/FIREBASE_CONTEXT.md`, `docs/MIGRACION_FIREBASE.md`
 
 ## UI integration note
 

@@ -1,86 +1,37 @@
 # 🚀 QUICK START - The Appden
 
-## ⚡ En 5 Minutos
-
-### 1. Instala dependencias (1 min)
+### 1. Instala dependencias
 ```bash
 npm install
 ```
 
-### 2. Crea `.env.local` (30 sec)
-```bash
-copy .env.example .env.local
-```
-
-**Edita `.env.local`** y pega tus credenciales Supabase:
-```env
-VITE_SUPABASE_URL=https://tu-proyecto.supabase.co
-VITE_SUPABASE_ANON_KEY=tu-anon-key-aqui
-```
-
-**¿De dónde sacas las credenciales?**
-- Ve a https://supabase.com
-- Crea proyecto (o entra a uno existente)
-- Vé a **Settings** → **API**
-- Copia `Project URL` y `anon public key`
-
-### 3. Database Setup (1 min)
-1. En Supabase → **SQL Editor**
-2. Abre el archivo `supabase/migrations/001_initial_schema.sql`
-3. Cópialo TODO
-4. Pégalo en una nueva query de Supabase
-5. Click ▶️ **Run**
-
-### 4. Storage Buckets (1 min)
-En Supabase → **Storage**, crea 4 buckets **privados**:
-- `avatars`
-- `song-covers`
-- `songs`
-- `files`
-
-### 5. Lanza la app (30 sec)
+### 2. Lanza la app
 ```bash
 npm run dev
 ```
 
-✅ Abre http://127.0.0.1:4173
+✅ Abre http://127.0.0.1:4173 y entra con tu cuenta (correo y contraseña o Google).
+
+No hace falta `.env.local`: por defecto la app usa el proyecto de Firebase `appdenski` y el Worker de R2
+de producción. Para apuntar a otro proyecto, define `VITE_FIREBASE_*` y `VITE_STORAGE_URL` en `.env.local`.
 
 ---
 
 ## 🐛 Si se queda cargando
 
-### Opción A: Usa check-setup
-```bash
-./check-setup.bat
-```
-
-### Opción B: Verifica en DevTools
-1. Abre F12 (DevTools)
-2. Vé a **Console**
-3. Mira los mensajes con emojis 🔐✅❌
-
-**Si ves "timeout"** → credenciales están mal
+- En el login, pulsa **"¿Problemas para entrar? Reparar la sesión de este dispositivo"**.
+- Abre DevTools (F12) → Console y busca errores de Firebase.
+- `Missing or insufficient permissions` → una regla de `firestore.rules` ha rechazado la petición.
+- `auth/unauthorized-domain` → añade el dominio en Firebase → Authentication → Settings → Authorized domains.
 
 ---
 
 ## ✅ ¿Funciona?
 
-- [ ] Ves "Login" o "Register"
-- [ ] Puedes entrar con email/password
-- [ ] Ves el dashboard
-- [ ] Puedes crear un grupo
+- [ ] Ves "Entrar" o "Crear cuenta"
+- [ ] Puedes entrar con email/contraseña o Google
+- [ ] Ves el dashboard y tus grupos
 
-Si todo está ✅ → **¡Listo para usar!**
+Las cuentas nuevas quedan pendientes hasta que un admin las apruebe.
 
----
-
-## 📚 Siguientes pasos
-
-- Ver [README.md](README.md) para docs completas
-- Invita amigos: Grupos → Copy Invite Link
-- Sube música: Música → Upload Song
-- Crea playlists
-
----
-
-¿Preguntas? Mira la sección **Troubleshooting** en [README.md](README.md)
+Más detalles en [README.md](README.md).

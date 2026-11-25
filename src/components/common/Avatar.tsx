@@ -1,6 +1,6 @@
 import React from 'react'
 import { User } from 'lucide-react'
-import { STORAGE_BUCKETS, getStorageUrl } from '@lib/supabase/client'
+import { STORAGE_BUCKETS, getStorageUrl } from '@lib/firebase/client'
 import { cn, getInitials } from '@lib/utils'
 
 interface AvatarProps {

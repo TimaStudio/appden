@@ -6,13 +6,13 @@
 - `src/components`: reusable UI and feature components.
 - `src/pages`: route-level pages.
 - `src/services`: data access and business logic.
-- `src/lib`: constants, validators, utils, Supabase client.
+- `src/lib`: constants, validators, utils, Firebase client and Firestore helpers, R2 client.
 - `src/types`: shared TypeScript interfaces.
 
 ## Data and backend resources
 
-- `supabase/migrations`: SQL schema and policies.
-- `supabase/*.sql`: operational SQL scripts.
+- `firestore.rules`, `firestore.indexes.json`: database security rules and indexes.
+- `r2-worker/`: Cloudflare Worker that serves files from R2.
 
 ## Team/process files
 

@@ -1,248 +1,166 @@
-import { supabase } from '@lib/supabase/client'
+import { addDoc, collection, deleteDoc, doc, getDoc, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { db } from '@lib/firebase/client'
+import { displayNameOf, fetchProfilesMap, getById, nowIso, queryDocs, sendNotifications } from '@lib/firebase/db'
 import { songsService } from '@services/songs.service'
-import type { Playlist, PlaylistSong, Profile } from '@/types'
+import type { Group, Playlist, PlaylistSong } from '@/types'
 import type { PlaylistFormData } from '@lib/validators'
 
 const PREVIEW_SIZE = 4
 
-async function fetchProfilesMap(userIds: string[]): Promise<Map<string, Profile>> {
-    const uniqueIds = Array.from(new Set(userIds.filter(Boolean)))
-    if (uniqueIds.length === 0) return new Map()
+type PlaylistDoc = Omit<Playlist, 'creator' | 'song_count' | 'preview_song_ids' | 'songs'>
+type PlaylistSongDoc = PlaylistSong & { group_id: string }
 
-    const { data, error } = await supabase
-        .from('profiles')
-        .select('id, display_name, username, avatar_url, bio, created_at, updated_at')
-        .in('id', uniqueIds)
+/** `playlist_songs/{playlistId}_{songId}`: a song appears once per playlist. */
+const entryId = (playlistId: string, songId: string) => `${playlistId}_${songId}`
 
-    if (error) {
-        console.warn('[Playlists] Failed to load creator profiles:', error)
-        return new Map()
-    }
+const byPosition = (a: { position: number }, b: { position: number }) => a.position - b.position
 
-    return new Map((data ?? []).map((profile) => [profile.id, profile]))
+async function entriesOf(groupId: string, playlistId?: string): Promise<PlaylistSongDoc[]> {
+    return queryDocs<PlaylistSongDoc>(
+        'playlist_songs',
+        where('group_id', '==', groupId),
+        ...(playlistId ? [where('playlist_id', '==', playlistId)] : [])
+    )
 }
 
-/** Song count + the first song ids (by position) of each playlist, in one query. */
-async function fetchPlaylistSongSummary(
-    playlistIds: string[]
-): Promise<Map<string, { count: number; previewIds: string[] }>> {
-    const uniqueIds = Array.from(new Set(playlistIds.filter(Boolean)))
-    if (uniqueIds.length === 0) return new Map()
-
-    const { data, error } = await supabase
-        .from('playlist_songs')
-        .select('playlist_id, song_id, position')
-        .in('playlist_id', uniqueIds)
-        .order('position', { ascending: true })
-
-    if (error) {
-        console.warn('[Playlists] Failed to load playlist songs:', error)
-        return new Map()
-    }
-
-    const summary = new Map<string, { count: number; previewIds: string[] }>()
-    const rows = [...((data ?? []) as Array<{ playlist_id: string; song_id: string; position: number }>)].sort(
-        (a, b) => a.position - b.position
-    )
-    for (const row of rows) {
-        const current = summary.get(row.playlist_id) ?? { count: 0, previewIds: [] }
-        current.count += 1
-        if (current.previewIds.length < PREVIEW_SIZE) current.previewIds.push(row.song_id)
-        summary.set(row.playlist_id, current)
-    }
-
-    return summary
+async function requirePlaylist(playlistId: string): Promise<PlaylistDoc> {
+    const playlist = await getById<PlaylistDoc>('playlists', playlistId)
+    if (!playlist) throw new Error('No encontramos esta playlist. Puede que se haya eliminado.')
+    return playlist
 }
 
 export const playlistsService = {
     async getPlaylists(groupId: string): Promise<Playlist[]> {
-        const { data, error } = await supabase
-            .from('playlists')
-            .select('*')
-            .eq('group_id', groupId)
-            .order('created_at', { ascending: false })
-
-        if (error) throw error
-
-        const playlists = (data ?? []) as Playlist[]
-        const [creatorMap, summaryMap] = await Promise.all([
-            fetchProfilesMap(playlists.map((playlist) => playlist.created_by)),
-            fetchPlaylistSongSummary(playlists.map((playlist) => playlist.id)),
+        const [playlists, entries] = await Promise.all([
+            queryDocs<PlaylistDoc>('playlists', where('group_id', '==', groupId)),
+            entriesOf(groupId),
         ])
+        const creators = await fetchProfilesMap(playlists.map((playlist) => playlist.created_by))
 
-        return playlists.map((playlist) => ({
-            ...playlist,
-            creator: creatorMap.get(playlist.created_by),
-            song_count: summaryMap.get(playlist.id)?.count ?? 0,
-            preview_song_ids: summaryMap.get(playlist.id)?.previewIds ?? [],
-        }))
+        return playlists
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+            .map((playlist) => {
+                const songs = entries.filter((entry) => entry.playlist_id === playlist.id).sort(byPosition)
+                return {
+                    ...playlist,
+                    creator: creators.get(playlist.created_by),
+                    song_count: songs.length,
+                    preview_song_ids: songs.slice(0, PREVIEW_SIZE).map((entry) => entry.song_id),
+                }
+            })
     },
 
     async getPlaylist(playlistId: string, userId: string): Promise<Playlist> {
-        const { data, error } = await supabase
-            .from('playlists')
-            .select('*')
-            .eq('id', playlistId)
-            .maybeSingle()
-
-        if (error) throw error
-        if (!data) throw new Error('No encontramos esta playlist. Puede que se haya eliminado.')
-
-        const playlist = data as Playlist
-        const [creatorMap, playlistSongsResult] = await Promise.all([
+        const playlist = await requirePlaylist(playlistId)
+        const [creators, entries] = await Promise.all([
             fetchProfilesMap([playlist.created_by]),
-            supabase
-                .from('playlist_songs')
-                .select('*')
-                .eq('playlist_id', playlistId)
-                .order('position', { ascending: true }),
+            entriesOf(playlist.group_id, playlistId),
         ])
-
-        if (playlistSongsResult.error) throw playlistSongsResult.error
-
-        const playlistSongs = [...((playlistSongsResult.data ?? []) as PlaylistSong[])].sort(
-            (a, b) => a.position - b.position
-        )
-        const songs = await songsService.getSongsByIds(
-            playlistSongs.map((entry) => entry.song_id),
-            userId
-        )
+        const ordered = entries.sort(byPosition)
+        const songs = await songsService.getSongsByIds(ordered.map((entry) => entry.song_id), userId)
         const songMap = new Map(songs.map((song) => [song.id, song]))
 
         return {
             ...playlist,
-            creator: creatorMap.get(playlist.created_by),
-            song_count: playlistSongs.length,
-            preview_song_ids: playlistSongs.slice(0, PREVIEW_SIZE).map((entry) => entry.song_id),
-            songs: playlistSongs.map((entry) => ({
-                ...entry,
-                song: songMap.get(entry.song_id),
-            })),
+            creator: creators.get(playlist.created_by),
+            song_count: ordered.length,
+            preview_song_ids: ordered.slice(0, PREVIEW_SIZE).map((entry) => entry.song_id),
+            songs: ordered.map((entry) => ({ ...entry, song: songMap.get(entry.song_id) })),
         }
     },
 
-    /** Ids of the playlists that already contain a song. */
+    /** Ids of the playlists (of the song's group) that already contain a song. */
     async getPlaylistIdsWithSong(songId: string): Promise<string[]> {
-        const { data, error } = await supabase
-            .from('playlist_songs')
-            .select('playlist_id')
-            .eq('song_id', songId)
-
-        if (error) throw error
-        return ((data ?? []) as Array<{ playlist_id: string }>).map((row) => row.playlist_id)
+        const song = await getById<{ group_id: string }>('songs', songId)
+        if (!song) return []
+        const rows = await queryDocs<PlaylistSongDoc>('playlist_songs', where('group_id', '==', song.group_id), where('song_id', '==', songId))
+        return rows.map((row) => row.playlist_id)
     },
 
-    async createPlaylist(
-        userId: string,
-        groupId: string,
-        form: PlaylistFormData
-    ): Promise<Playlist> {
-        const { data, error } = await supabase
-            .from('playlists')
-            .insert({
-                group_id: groupId,
-                created_by: userId,
-                name: form.name.trim(),
-                description: form.description?.trim() || null,
-            })
-            .select('*')
-            .single()
-
-        if (error) throw error
-
-        return {
-            ...(data as Playlist),
-            song_count: 0,
-            preview_song_ids: [],
+    async createPlaylist(userId: string, groupId: string, form: PlaylistFormData): Promise<Playlist> {
+        const now = nowIso()
+        const data = {
+            group_id: groupId,
+            created_by: userId,
+            name: form.name.trim(),
+            description: form.description?.trim() || null,
+            cover_url: null,
+            created_at: now,
+            updated_at: now,
         }
+        const ref = await addDoc(collection(db, 'playlists'), data)
+
+        const [group, profiles] = await Promise.all([getById<Group>('groups', groupId), fetchProfilesMap([userId])])
+        await sendNotifications(
+            userId,
+            (group?.member_ids ?? []).map((memberId) => ({
+                user_id: memberId,
+                group_id: groupId,
+                type: 'playlist_created' as const,
+                title: 'Nueva playlist',
+                body: `${displayNameOf(profiles.get(userId))} ha creado "${data.name}"`,
+                resource_type: 'playlist' as const,
+                resource_id: ref.id,
+            }))
+        )
+
+        return { id: ref.id, ...data, song_count: 0, preview_song_ids: [] }
     },
 
-    async updatePlaylist(
-        playlistId: string,
-        form: PlaylistFormData
-    ): Promise<Playlist> {
-        const { data, error } = await supabase
-            .from('playlists')
-            .update({
+    async updatePlaylist(playlistId: string, form: PlaylistFormData): Promise<Playlist> {
+        try {
+            await updateDoc(doc(db, 'playlists', playlistId), {
                 name: form.name.trim(),
                 description: form.description?.trim() || null,
-                updated_at: new Date().toISOString(),
+                updated_at: nowIso(),
             })
-            .eq('id', playlistId)
-            .select('*')
-
-        if (error) throw error
-        const [updated] = (data ?? []) as Playlist[]
-        if (!updated) throw new Error('Solo quien creó la playlist puede editarla.')
-        return updated
+        } catch {
+            throw new Error('Solo quien creó la playlist puede editarla.')
+        }
+        return requirePlaylist(playlistId)
     },
 
     async deletePlaylist(playlistId: string): Promise<void> {
-        const { data, error } = await supabase
-            .from('playlists')
-            .delete()
-            .eq('id', playlistId)
-            .select('id')
-
-        if (error) throw error
-        if (!data || data.length === 0) throw new Error('Solo quien creó la playlist puede eliminarla.')
-    },
-
-    async addSong(
-        playlistId: string,
-        songId: string,
-        userId: string
-    ): Promise<void> {
-        const { data: existing, error: existingError } = await supabase
-            .from('playlist_songs')
-            .select('position')
-            .eq('playlist_id', playlistId)
-            .order('position', { ascending: false })
-            .limit(1)
-
-        if (existingError) throw existingError
-
-        const nextPosition = ((existing?.[0] as { position: number } | undefined)?.position ?? -1) + 1
-
-        const { error } = await supabase.from('playlist_songs').insert({
-            playlist_id: playlistId,
-            song_id: songId,
-            position: nextPosition,
-            added_by: userId,
-        })
-
-        if (error) {
-            if (error.code === '23505') throw new Error('Esta canción ya está en la playlist.')
-            throw error
+        const playlist = await requirePlaylist(playlistId)
+        const entries = await entriesOf(playlist.group_id, playlistId)
+        try {
+            const batch = writeBatch(db)
+            for (const entry of entries) batch.delete(doc(db, 'playlist_songs', entry.id))
+            batch.delete(doc(db, 'playlists', playlistId))
+            await batch.commit()
+        } catch {
+            throw new Error('Solo quien creó la playlist puede eliminarla.')
         }
     },
 
-    async removeSong(playlistId: string, songId: string): Promise<void> {
-        const { data, error } = await supabase
-            .from('playlist_songs')
-            .delete()
-            .eq('playlist_id', playlistId)
-            .eq('song_id', songId)
-            .select('id')
+    async addSong(playlistId: string, songId: string, userId: string): Promise<void> {
+        const playlist = await requirePlaylist(playlistId)
+        const ref = doc(db, 'playlist_songs', entryId(playlistId, songId))
+        if ((await getDoc(ref)).exists()) throw new Error('Esta canción ya está en la playlist.')
 
-        if (error) throw error
-        if (!data || data.length === 0) {
+        const entries = await entriesOf(playlist.group_id, playlistId)
+        const nextPosition = entries.reduce((max, entry) => Math.max(max, entry.position), -1) + 1
+        await setDoc(ref, {
+            playlist_id: playlistId,
+            song_id: songId,
+            group_id: playlist.group_id,
+            position: nextPosition,
+            added_by: userId,
+            added_at: nowIso(),
+        })
+    },
+
+    async removeSong(playlistId: string, songId: string): Promise<void> {
+        try {
+            await deleteDoc(doc(db, 'playlist_songs', entryId(playlistId, songId)))
+        } catch {
             throw new Error('Solo quien creó la playlist (o quien añadió la canción) puede quitarla.')
         }
     },
 
-    async reorderSongs(
-        playlistSongs: { id: string; position: number }[]
-    ): Promise<void> {
-        const updates = playlistSongs.map(({ id, position }) =>
-            supabase
-                .from('playlist_songs')
-                .update({ position })
-                .eq('id', id)
-        )
-
-        const results = await Promise.all(updates)
-        const failed = results.find((result) => result.error)
-        if (failed?.error) throw failed.error
+    async reorderSongs(playlistSongs: { id: string; position: number }[]): Promise<void> {
+        const batch = writeBatch(db)
+        for (const { id, position } of playlistSongs) batch.update(doc(db, 'playlist_songs', id), { position })
+        await batch.commit()
     },
 }

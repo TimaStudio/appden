@@ -1,4 +1,4 @@
-﻿# Runbook
+# Runbook
 
 Snapshot date: 2026-04-07
 
@@ -9,24 +9,10 @@ Snapshot date: 2026-04-07
 npm install
 ```
 
-2. Create env file:
-```bash
-copy .env.example .env.local
-```
+2. Start it (`npm run dev`). No env file is needed: the production Firebase project and
+   R2 Worker are the defaults; override them with `VITE_FIREBASE_*` / `VITE_STORAGE_URL` in `.env.local`.
 
-3. Fill `.env.local` with Supabase URL and anon key.
-   For QA seeding you also need:
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - optional: `QA_SEED_EMAIL_DOMAIN`, `QA_SEED_DEFAULT_PASSWORD`
-
-4. Run SQL migrations in Supabase SQL Editor (001 -> 014).
-
-5. Ensure storage buckets exist:
-- `avatars`
-- `covers`
-- `songs`
-- `files`
-- `reports` (recommended)
+3. Deploy rules/indexes with `npm run firebase:rules` and the Worker with `npm run storage:deploy`.
 
 6. Start app:
 ```bash
@@ -57,35 +43,14 @@ Current result at snapshot date:
 
 - lint passes
 
-## QA seeding
-
-Commands:
-
-```bash
-npm run seed:qa
-npm run seed:qa:fresh
-npm run seed:qa:reset
-```
+## QA
 
 Reference docs:
 
-- `docs/QA_SEEDING_GUIDE.md`
 - `docs/QA_TEST_CHECKLIST.md`
-- `docs/QA_PRELAUNCH_AUDIT.md`
-- `docs/QA_MANUAL_SMOKE_ES.md`
 
-Important:
-
-- run seeding only against a dedicated QA/staging Supabase project
-- the current seed namespace uses:
-  - emails ending in `@<QA_SEED_EMAIL_DOMAIN>`
-  - group names prefixed with `QA Seed:`
-
-Manual fallback when `SUPABASE_SERVICE_ROLE_KEY` is not available:
-
-- use `supabase/seeds/qa_manual_smoke_reset.sql`
-- then run `supabase/seeds/qa_manual_smoke_seed.sql` in Supabase SQL Editor
-- this creates temporary groups named `QA Temp:%` using existing profiles instead of creating auth users
+The old Supabase seed scripts were removed with the migration; test with real accounts or a
+throwaway `@example.com` account, deleting it afterwards.
 
 ## Incognito-only symptom recovery flow
 
@@ -104,40 +69,18 @@ Code paths:
 - `src/pages/auth/LoginPage.tsx`
 - `src/services/auth.service.ts` (`hardResetClientState`)
 
-## Supabase launch checks
+## Launch checks
 
-Before sharing app with friends:
+- registration (pending approval) and login (email and Google) work in a normal browser tab
+- an admin approves the account from the app
+- song upload works (audio + cover go to R2, signed URLs open)
+- groups: create, invite link, invitation, leave
+- debts: create, pay, settle; notifications reach the other party
+- rules reject data from groups you are not in
 
-- registration and login work in normal browser tab
-- migrations `008_fix_rls_groups_recursion.sql`, `009_social_connections_reports_admin.sql`, `010_groups_rls_rpc_hardening.sql`, `011_song_upload_storage_hardening.sql`, and `012_song_artist_credits.sql` applied
-- song upload works (audio + cover)
-- song upload does not emit stray 500s after success because ownership/activity sync is now server-side
-- if cover upload fails, the UI now fails clearly instead of silently creating a song without cover
-- song artist credits support:
-  - one artist
-  - multiple artists
-  - mix of existing users + external manual names
-- cover and song URLs open (signed URL generated)
-- social/changelog/report routes work without relation errors
-- group creation works through `create_group_with_owner(...)`
-- `/connections` flow works (send + accept + reject)
-- `/reports` list/detail works and creation is possible even without active group
-- RLS limits data to group members
+## Admin bootstrap
 
-## Admin bootstrap (when your user exists)
-
-Run once in Supabase SQL Editor (as project owner):
-
-```sql
-insert into user_roles (user_id, role, created_by)
-values ('<TU_USER_ID_UUID>', 'admin', '<TU_USER_ID_UUID>')
-on conflict (user_id, role) do nothing;
-```
-
-Then re-login and confirm:
-
-- report badge appears in navigation for admin
-- admin can change report status in `/reports` and `/reports/:reportId`
+Create `admins/<uid>` (any field) in the Firebase console → Firestore, then re-login.
 
 ## Changelog automation
 

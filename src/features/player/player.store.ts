@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { playerEngine } from '@features/player/player.engine'
 import { playerPersistence } from '@features/player/player.persistence'
-import { getStorageUrl, STORAGE_BUCKETS } from '@lib/supabase/client'
+import { getStorageUrl, STORAGE_BUCKETS } from '@lib/firebase/client'
 import {
     addSongToQueue,
     getNextIndex,

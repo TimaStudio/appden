@@ -1,4 +1,7 @@
-﻿# Chat Context (Condensed Timeline)
+# Chat Context (Condensed Timeline)
+
+> Historical note: written while the app ran on Supabase. Since 2026-11-25 the app uses
+> Firebase (Auth + Firestore) and Cloudflare R2; see `agent-context/FIREBASE_CONTEXT.md`.
 
 This file captures decisions and incidents from this collaboration thread so future agents understand why the code looks like this.
 

@@ -1,29 +1,18 @@
-import { supabase } from '@lib/supabase/client'
-import { reportLocalFallback } from '@lib/diagnostics/fallback'
+import { limit, orderBy } from 'firebase/firestore'
+import { queryDocs } from '@lib/firebase/db'
 import type { ChangelogItem, GeneratedChangelogPayload } from '@features/changelog/types'
 
-const FALLBACK_STORAGE_KEY = 'appden:changelog:fallback:v2'
 const GENERATED_CHANGELOG_PATH = '/changelog.generated.json'
 
 export const changelogService = {
-    async list(): Promise<{ entries: ChangelogItem[]; currentVersion: string; source: 'generated' | 'supabase' | 'fallback' }> {
-        const fallback = readFallback()
-        const { data, error } = await supabase
-            .from('changelog_entries')
-            .select('*')
-            .order('release_date', { ascending: false })
-            .order('created_at', { ascending: false })
-            .limit(100)
-
-        if (!error) {
-            const entries = (data ?? []) as ChangelogItem[]
-            if (entries.length > 0) {
-                return {
-                    entries,
-                    currentVersion: this.getCurrentVersion(entries),
-                    source: 'supabase',
-                }
-            }
+    async list(): Promise<{ entries: ChangelogItem[]; currentVersion: string; source: 'generated' | 'database' | 'fallback' }> {
+        const entries = await queryDocs<ChangelogItem>('changelog_entries', orderBy('release_date', 'desc'), limit(100)).catch((error) => {
+            console.warn('[Changelog] No se pudo leer el changelog:', error)
+            return [] as ChangelogItem[]
+        })
+        if (entries.length > 0) {
+            entries.sort((a, b) => b.release_date.localeCompare(a.release_date) || b.created_at.localeCompare(a.created_at))
+            return { entries, currentVersion: this.getCurrentVersion(entries), source: 'database' }
         }
 
         const generated = await this.readGeneratedFile()
@@ -35,23 +24,7 @@ export const changelogService = {
             }
         }
 
-        if (error) {
-            if (isMissingRelationError(error)) {
-                reportLocalFallback('changelog', error)
-                return {
-                    entries: fallback,
-                    currentVersion: this.getCurrentVersion(fallback),
-                    source: 'fallback',
-                }
-            }
-            throw error
-        }
-
-        return {
-            entries: fallback,
-            currentVersion: this.getCurrentVersion(fallback),
-            source: 'fallback',
-        }
+        return { entries: [], currentVersion: this.getCurrentVersion([]), source: 'fallback' }
     },
 
     getCurrentVersion(entries: ChangelogItem[]): string {
@@ -63,11 +36,8 @@ export const changelogService = {
         if (typeof window === 'undefined') return null
 
         try {
-            const response = await fetch(`${GENERATED_CHANGELOG_PATH}?t=${Date.now()}`, {
-                cache: 'no-store',
-            })
+            const response = await fetch(`${GENERATED_CHANGELOG_PATH}?t=${Date.now()}`, { cache: 'no-store' })
             if (!response.ok) return null
-
             const payload = (await response.json()) as GeneratedChangelogPayload
             if (!payload || !Array.isArray(payload.entries)) return null
             return payload
@@ -75,23 +45,4 @@ export const changelogService = {
             return null
         }
     },
-}
-
-function readFallback(): ChangelogItem[] {
-    if (typeof window === 'undefined') return []
-
-    try {
-        const raw = window.localStorage.getItem(FALLBACK_STORAGE_KEY)
-        if (!raw) return []
-        return JSON.parse(raw) as ChangelogItem[]
-    } catch {
-        return []
-    }
-}
-
-function isMissingRelationError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false
-    const anyError = error as { code?: string; message?: string; details?: string }
-    const raw = `${anyError.code ?? ''} ${anyError.message ?? ''} ${anyError.details ?? ''}`.toLowerCase()
-    return raw.includes('42p01') || raw.includes('pgrst205') || raw.includes('does not exist')
 }

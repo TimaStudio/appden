@@ -1,16 +1,10 @@
-import { getStorageUrl, STORAGE_BUCKETS, supabase, storage } from '@lib/supabase/client'
+import { FirebaseError } from 'firebase/app'
+import { addDoc, collection, deleteDoc, doc, updateDoc, where, writeBatch } from 'firebase/firestore'
+import { auth, db, getStorageUrl, STORAGE_BUCKETS, storage } from '@lib/firebase/client'
+import { displayNameOf, fetchProfilesMap, getById, nowIso, queryDocs, sendNotifications } from '@lib/firebase/db'
 import { generateStoragePath } from '@lib/utils'
 import { amountToCents, centsToAmount } from '@features/debts/split'
 import type { Debt, DebtCurrency, DebtPayment } from '@/types'
-
-/** File the user must apply in Supabase for debts between other members, payments by both sides, due dates. */
-export const DEBTS_MIGRATION_FILE = 'supabase/migrations/017_debts_group_members.sql'
-
-const DEBT_WITH_PEOPLE = `
-    *,
-    creditor:profiles!debts_creditor_id_fkey(id, display_name, avatar_url),
-    debtor:profiles!debts_debtor_id_fkey(id, display_name, avatar_url)
-`
 
 export type DebtErrorKind = 'permission' | 'migration' | 'invalid' | 'network' | 'unknown'
 
@@ -63,55 +57,29 @@ export interface CreateDebtsResult {
 
 export interface RegisterPaymentResult {
     payment: DebtPayment | null
-    /** The payment updated the balance but could not be stored in the history (migration 017 missing). */
-    historySkipped: boolean
     receiptFailed: boolean
     settled: boolean
 }
 
-type PostgrestLikeError = { code?: string; message?: string; details?: string; hint?: string }
-
-function rawError(error: unknown): string {
-    if (!error || typeof error !== 'object') return String(error ?? '')
-    const e = error as PostgrestLikeError
-    return `${e.code ?? ''} ${e.message ?? ''} ${e.details ?? ''} ${e.hint ?? ''}`.toLowerCase()
-}
-
-export function isMissingColumnError(error: unknown): boolean {
-    const raw = rawError(error)
-    return raw.includes('42703') || raw.includes('pgrst204') || (raw.includes('column') && (raw.includes('does not exist') || raw.includes('could not find')))
-}
-
-function isPermissionError(error: unknown): boolean {
-    const raw = rawError(error)
-    return raw.includes('42501') || raw.includes('row-level security') || raw.includes('permission denied')
-}
-
-/** Turns any Supabase/network error into a DebtError with a clear Spanish message. */
+/** Turns any Firestore/network error into a DebtError with a clear Spanish message. */
 export function toDebtError(error: unknown, fallback = 'No se pudo guardar. Inténtalo de nuevo.'): DebtError {
     if (error instanceof DebtError) return error
-    const raw = rawError(error)
-    if (isMissingColumnError(error)) {
-        return new DebtError('migration', `Falta aplicar la migración 017 en Supabase (${DEBTS_MIGRATION_FILE}).`)
+    const code = error instanceof FirebaseError ? error.code : ''
+    if (code === 'permission-denied') {
+        return new DebtError('permission', 'No tienes permiso para hacer esto con esta deuda.')
     }
-    if (isPermissionError(error)) {
-        return new DebtError(
-            'permission',
-            `No tienes permiso para hacer esto con esta deuda. Si la base de datos no tiene la migración 017 (${DEBTS_MIGRATION_FILE}), solo quien prestó puede modificarla.`
-        )
-    }
-    if (raw.includes('23514') || raw.includes('check constraint')) {
-        return new DebtError('invalid', 'El importe no es válido: revisa que no sea menor que lo ya pagado y que deudor y acreedor sean personas distintas.')
-    }
-    if (raw.includes('failed to fetch') || raw.includes('network') || raw.includes('load failed')) {
+    if (code === 'unavailable' || code === 'deadline-exceeded') {
         return new DebtError('network', 'Sin conexión. Revisa tu internet e inténtalo de nuevo.')
     }
-    const message = error instanceof Error ? error.message : (error as PostgrestLikeError | null)?.message
+    const message = error instanceof Error ? error.message : ''
     return new DebtError('unknown', message || fallback)
 }
 
-function toRow(groupId: string, input: CreateDebtInput) {
-    const row: Record<string, unknown> = {
+type DebtDoc = Omit<Debt, 'creditor' | 'debtor' | 'payments'>
+
+function toDoc(groupId: string, input: CreateDebtInput, createdBy: string): Omit<DebtDoc, 'id'> {
+    const now = nowIso()
+    return {
         group_id: groupId,
         creditor_id: input.creditorId,
         debtor_id: input.debtorId,
@@ -120,10 +88,11 @@ function toRow(groupId: string, input: CreateDebtInput) {
         concept: input.concept.trim().slice(0, 200),
         status: 'pending',
         amount_paid: 0,
+        created_by: createdBy,
+        due_date: input.dueDate || null,
+        created_at: now,
+        updated_at: now,
     }
-    // created_by is filled by the column default (auth.uid()) when migration 017 exists.
-    if (input.dueDate) row.due_date = input.dueDate
-    return row
 }
 
 function validateInput(input: CreateDebtInput): void {
@@ -133,107 +102,133 @@ function validateInput(input: CreateDebtInput): void {
     if (!input.concept.trim()) throw new DebtError('invalid', 'Escribe un concepto.')
 }
 
-export const debtsService = {
-    /**
-     * Get all debts for a group (with creditor/debtor profiles).
-     */
-    async getDebts(groupId: string): Promise<Debt[]> {
-        const { data, error } = await supabase
-            .from('debts')
-            .select(DEBT_WITH_PEOPLE)
-            .eq('group_id', groupId)
-            .order('created_at', { ascending: false })
+function currentUserId(): string {
+    const uid = auth.currentUser?.uid
+    if (!uid) throw new DebtError('permission', 'Necesitas iniciar sesión.')
+    return uid
+}
 
-        if (error) throw error
-        return normalizeDebts(data as Debt[])
+async function withPeople(debts: DebtDoc[]): Promise<Debt[]> {
+    const profiles = await fetchProfilesMap(debts.flatMap((debt) => [debt.creditor_id, debt.debtor_id]))
+    return normalizeDebts(debts.map((debt) => ({ ...debt, creditor: profiles.get(debt.creditor_id), debtor: profiles.get(debt.debtor_id) })))
+}
+
+function formatAmount(debt: Pick<Debt, 'amount' | 'currency'>): string {
+    return `${Number(debt.amount).toFixed(2)} ${debt.currency}`
+}
+
+/** Same messages the old database trigger sent. */
+async function notifyDebtCreated(actorId: string, debt: Debt): Promise<void> {
+    const profiles = await fetchProfilesMap([actorId, debt.creditor_id, debt.debtor_id])
+    const actor = displayNameOf(profiles.get(actorId))
+    const creditor = displayNameOf(profiles.get(debt.creditor_id))
+    const debtor = displayNameOf(profiles.get(debt.debtor_id))
+    const amount = formatAmount(debt)
+    const base = { group_id: debt.group_id, resource_type: 'debt' as const, resource_id: debt.id, type: 'debt_created' as const }
+    await sendNotifications(actorId, [
+        {
+            ...base,
+            user_id: debt.debtor_id,
+            title: 'Nueva deuda',
+            body:
+                actorId === debt.creditor_id
+                    ? `${creditor} te ha apuntado ${amount} por "${debt.concept}"`
+                    : `${actor} ha apuntado que le debes ${amount} a ${creditor} por "${debt.concept}"`,
+        },
+        {
+            ...base,
+            user_id: debt.creditor_id,
+            title: 'Nueva deuda a tu favor',
+            body:
+                actorId === debt.debtor_id
+                    ? `${debtor} ha apuntado que te debe ${amount} por "${debt.concept}"`
+                    : `${actor} ha apuntado que ${debtor} te debe ${amount} por "${debt.concept}"`,
+        },
+    ])
+}
+
+async function notifyDebtPaid(actorId: string, debt: Pick<Debt, 'id' | 'group_id' | 'creditor_id' | 'debtor_id' | 'concept'>): Promise<void> {
+    const profiles = await fetchProfilesMap([actorId, debt.debtor_id])
+    const base = { group_id: debt.group_id, resource_type: 'debt' as const, resource_id: debt.id, type: 'debt_paid' as const, title: 'Deuda saldada' }
+    await sendNotifications(actorId, [
+        { ...base, user_id: debt.creditor_id, body: `${displayNameOf(profiles.get(debt.debtor_id))} ha saldado "${debt.concept}"` },
+        { ...base, user_id: debt.debtor_id, body: `${displayNameOf(profiles.get(actorId))} ha marcado como saldada "${debt.concept}"` },
+    ])
+}
+
+export const debtsService = {
+    /** All debts of a group (with creditor/debtor profiles), newest first. */
+    async getDebts(groupId: string): Promise<Debt[]> {
+        const rows = await queryDocs<DebtDoc>('debts', where('group_id', '==', groupId))
+        return withPeople(rows.sort((a, b) => b.created_at.localeCompare(a.created_at)))
     },
 
-    /**
-     * Get a single debt with its payment history (oldest payment first).
-     */
+    /** One debt with its payment history (oldest payment first). */
     async getDebt(debtId: string): Promise<Debt> {
-        const { data, error } = await supabase
-            .from('debts')
-            .select(`
-        ${DEBT_WITH_PEOPLE},
-        payments:debt_payments(
-          *,
-          payer:profiles!debt_payments_paid_by_fkey(id, display_name, avatar_url)
+        const row = await getById<DebtDoc>('debts', debtId)
+        if (!row) throw new DebtError('invalid', 'Esta deuda ya no existe.')
+        const [debt] = await withPeople([row])
+
+        const payments = (
+            await queryDocs<DebtPayment>('debt_payments', where('group_id', '==', row.group_id), where('debt_id', '==', debtId))
         )
-      `)
-            .eq('id', debtId)
-            .single()
-
-        if (error) throw error
-
-        const [debt] = normalizeDebts([data as Debt])
-        const payments = [...(debt.payments ?? [])]
             .map((payment) => ({ ...payment, amount: Number(payment.amount) }))
             .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        const payers = await fetchProfilesMap(payments.map((payment) => payment.paid_by))
 
         debt.payments = await Promise.all(
             payments.map(async (payment) => {
-                if (!payment.receipt_url || /^https?:\/\//.test(payment.receipt_url)) return payment
+                const withPayer = { ...payment, payer: payers.get(payment.paid_by) }
+                if (!payment.receipt_url || /^https?:\/\//.test(payment.receipt_url)) return withPayer
                 const signed = await getStorageUrl(STORAGE_BUCKETS.FILES, payment.receipt_url).catch(() => null)
-                return { ...payment, receipt_url: signed ?? payment.receipt_url }
+                return { ...withPayer, receipt_url: signed ?? payment.receipt_url }
             })
         )
-
         return debt
     },
 
-    /**
-     * Whether migration 017 is applied (debts.created_by / due_date exist).
-     * Without it the app still works, but only the creditor can update a debt.
-     */
     async getCapabilities(): Promise<{ groupDebts: boolean }> {
-        const { error } = await supabase.from('debts').select('id, created_by, due_date').limit(1)
-        if (error && isMissingColumnError(error)) return { groupDebts: false }
         return { groupDebts: true }
     },
 
-    /**
-     * Create one debt. Any member can write down a debt between two members of the group
-     * (e.g. "Marcos owes Ana"); the database checks membership.
-     */
+    /** Any member can write down a debt between two members of the group. */
     async createDebt(groupId: string, input: CreateDebtInput): Promise<Debt> {
         validateInput(input)
-        const { data, error } = await supabase.from('debts').insert(toRow(groupId, input)).select(DEBT_WITH_PEOPLE).single()
-        if (error) throw toDebtError(error, 'No se pudo apuntar la deuda.')
-        return normalizeDebts([data as Debt])[0]
+        const actorId = currentUserId()
+        let debt: Debt
+        try {
+            const data = toDoc(groupId, input, actorId)
+            const ref = await addDoc(collection(db, 'debts'), data)
+            ;[debt] = await withPeople([{ id: ref.id, ...data }])
+        } catch (error) {
+            throw toDebtError(error, 'No se pudo apuntar la deuda.')
+        }
+        await notifyDebtCreated(actorId, debt)
+        return debt
     },
 
-    /**
-     * Create several debts at once (bill splitter). Tries a single atomic insert first;
-     * if that fails, inserts one by one so the caller can report exactly which ones failed.
-     */
+    /** Several debts at once (bill splitter), in one atomic batch. */
     async createDebts(groupId: string, inputs: CreateDebtInput[]): Promise<CreateDebtsResult> {
         if (inputs.length === 0) return { created: [], failed: [] }
         inputs.forEach(validateInput)
+        const actorId = currentUserId()
 
-        const { data, error } = await supabase.from('debts').insert(inputs.map((input) => toRow(groupId, input))).select(DEBT_WITH_PEOPLE)
-        if (!error) return { created: normalizeDebts((data ?? []) as Debt[]), failed: [] }
-
-        // A missing column or a network error would fail every row in the same way.
-        const batchError = toDebtError(error)
-        if (batchError.kind === 'migration' || batchError.kind === 'network') {
-            return { created: [], failed: inputs.map((input) => ({ input, message: batchError.message })) }
+        const rows = inputs.map((input) => ({ id: doc(collection(db, 'debts')).id, ...toDoc(groupId, input, actorId) }))
+        try {
+            const batch = writeBatch(db)
+            for (const { id, ...data } of rows) batch.set(doc(db, 'debts', id), data)
+            await batch.commit()
+        } catch (error) {
+            const message = toDebtError(error).message
+            return { created: [], failed: inputs.map((input) => ({ input, message })) }
         }
 
-        const result: CreateDebtsResult = { created: [], failed: [] }
-        for (const input of inputs) {
-            try {
-                result.created.push(await this.createDebt(groupId, input))
-            } catch (err) {
-                result.failed.push({ input, message: toDebtError(err).message })
-            }
-        }
-        return result
+        const created = await withPeople(rows)
+        await Promise.all(created.map((debt) => notifyDebtCreated(actorId, debt)))
+        return { created, failed: [] }
     },
 
-    /**
-     * Edit concept, amount, currency or due date. The amount can't go below what has been paid.
-     */
+    /** Edit concept, amount, currency or due date. The amount can't go below what has been paid. */
     async updateDebt(debt: Debt, input: UpdateDebtInput): Promise<void> {
         const amountCents = amountToCents(input.amount)
         const paidCents = amountToCents(debt.amount_paid)
@@ -246,26 +241,30 @@ export const debtsService = {
             currency: input.currency,
             concept: input.concept.trim().slice(0, 200),
             status: paidCents >= amountCents ? 'paid' : paidCents > 0 ? 'partial' : 'pending',
+            updated_at: nowIso(),
         }
-        if (input.dueDate !== undefined && (input.dueDate || debt.due_date)) patch.due_date = input.dueDate || null
+        if (input.dueDate !== undefined) patch.due_date = input.dueDate || null
 
-        const { data, error } = await supabase.from('debts').update(patch).eq('id', debt.id).select('id')
-        if (error) throw toDebtError(error)
-        if (!data || data.length === 0) throw toDebtError({ code: '42501' })
+        try {
+            await updateDoc(doc(db, 'debts', debt.id), patch)
+        } catch (error) {
+            throw toDebtError(error)
+        }
     },
 
     async deleteDebt(debtId: string): Promise<void> {
-        const { data, error } = await supabase.from('debts').delete().eq('id', debtId).select('id')
-        if (error) throw toDebtError(error, 'No se pudo eliminar la deuda.')
-        if (!data || data.length === 0) {
-            throw new DebtError('permission', 'Solo quien prestó el dinero o quien apuntó la deuda puede eliminarla.')
+        try {
+            await deleteDoc(doc(db, 'debts', debtId))
+        } catch (error) {
+            const debtError = toDebtError(error, 'No se pudo eliminar la deuda.')
+            if (debtError.kind === 'permission') {
+                throw new DebtError('permission', 'Solo quien prestó el dinero o quien apuntó la deuda puede eliminarla.')
+            }
+            throw debtError
         }
     },
 
-    /**
-     * Register a partial or full payment. Either party can do it with migration 017;
-     * without it, the creditor can still update the balance (the history row is skipped).
-     */
+    /** Register a partial or full payment. Either party (or whoever wrote the debt down) can do it. */
     async registerPayment(
         debt: Debt,
         recordedBy: string,
@@ -283,10 +282,10 @@ export const debtsService = {
         let receiptMimeType: string | null = null
         let receiptFailed = false
         if (input.receiptFile) {
-            const path = generateStoragePath('debt-receipts', recordedBy, input.receiptFile.name)
+            const path = generateStoragePath(`${debt.group_id}/debt-receipts`, recordedBy, input.receiptFile.name)
             const { error: uploadError } = await storage
                 .from(STORAGE_BUCKETS.FILES)
-                .upload(path, input.receiptFile, { upsert: false, cacheControl: '3600' })
+                .upload(path, input.receiptFile, { upsert: false, cacheControl: '3600', contentType: input.receiptFile.type || undefined })
             if (uploadError) {
                 receiptFailed = true
             } else {
@@ -295,77 +294,53 @@ export const debtsService = {
             }
         }
 
-        let payment: DebtPayment | null = null
-        let historySkipped = false
-        const { data: inserted, error: paymentError } = await supabase
-            .from('debt_payments')
-            .insert({
-                debt_id: debt.id,
-                amount: centsToAmount(payCents),
-                note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
-                // paid_by is who paid (the debtor), even when the creditor writes it down.
-                paid_by: debt.debtor_id,
-                receipt_url: receiptPath,
-                receipt_mime_type: receiptMimeType,
-            })
-            .select()
-            .single()
-
-        if (paymentError) {
-            // Without migration 017 only the debtor can insert payments; the creditor can still update the debt.
-            if (isPermissionError(paymentError) && debt.creditor_id === recordedBy) {
-                historySkipped = true
-            } else {
-                throw toDebtError(paymentError, 'No se pudo registrar el pago.')
-            }
-        } else {
-            payment = inserted as DebtPayment
+        const paymentRef = doc(collection(db, 'debt_payments'))
+        const payment: DebtPayment = {
+            id: paymentRef.id,
+            debt_id: debt.id,
+            amount: centsToAmount(payCents),
+            note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
+            // paid_by is who paid (the debtor), even when the creditor writes it down.
+            paid_by: debt.debtor_id,
+            recorded_by: recordedBy,
+            receipt_url: receiptPath,
+            receipt_mime_type: receiptMimeType,
+            created_at: nowIso(),
         }
 
-        const { data: updated, error: updateError } = await supabase
-            .from('debts')
-            .update({ amount_paid: centsToAmount(newPaidCents), status: newStatus })
-            .eq('id', debt.id)
-            .select('id')
-
-        if (updateError) throw toDebtError(updateError, 'No se pudo actualizar la deuda.')
-        if (!updated || updated.length === 0) {
-            throw new DebtError(
-                'permission',
-                payment
-                    ? `El pago quedó en el historial, pero el saldo no se pudo actualizar: falta la migración 017 (${DEBTS_MIGRATION_FILE}).`
-                    : `No tienes permiso para actualizar esta deuda. Aplica la migración 017 (${DEBTS_MIGRATION_FILE}).`
-            )
+        try {
+            const { id: _id, ...paymentData } = payment
+            const batch = writeBatch(db)
+            batch.set(paymentRef, { ...paymentData, group_id: debt.group_id })
+            batch.update(doc(db, 'debts', debt.id), { amount_paid: centsToAmount(newPaidCents), status: newStatus, updated_at: nowIso() })
+            await batch.commit()
+        } catch (error) {
+            throw toDebtError(error, 'No se pudo registrar el pago.')
         }
 
-        return { payment, historySkipped, receiptFailed, settled: newStatus === 'paid' }
+        if (newStatus === 'paid' && debt.status !== 'paid') await notifyDebtPaid(recordedBy, debt)
+        return { payment, receiptFailed, settled: newStatus === 'paid' }
     },
 
-    /**
-     * Mark a debt as fully paid: registers the pending amount as a final payment so the history adds up.
-     */
+    /** Mark a debt as fully paid: registers the pending amount as a final payment so the history adds up. */
     async markAsPaid(debt: Debt, recordedBy: string): Promise<RegisterPaymentResult> {
         const remaining = centsToAmount(amountToCents(debt.amount) - amountToCents(debt.amount_paid))
         if (remaining <= 0) {
-            const { error } = await supabase.from('debts').update({ status: 'paid' }).eq('id', debt.id)
-            if (error) throw toDebtError(error)
-            return { payment: null, historySkipped: false, receiptFailed: false, settled: true }
+            try {
+                await updateDoc(doc(db, 'debts', debt.id), { status: 'paid', updated_at: nowIso() })
+            } catch (error) {
+                throw toDebtError(error)
+            }
+            if (debt.status !== 'paid') await notifyDebtPaid(recordedBy, debt)
+            return { payment: null, receiptFailed: false, settled: true }
         }
         return this.registerPayment(debt, recordedBy, { amount: remaining, note: 'Saldada' })
     },
 
-    /**
-     * Per-user open balances for a group, without mixing currencies.
-     */
+    /** Per-user open balances for a group, without mixing currencies. */
     async getGroupSummary(groupId: string): Promise<Record<string, DebtUserBalance>> {
-        const { data, error } = await supabase
-            .from('debts')
-            .select('creditor_id, debtor_id, amount, amount_paid, status, currency')
-            .eq('group_id', groupId)
-            .neq('status', 'paid')
-
-        if (error) throw error
-        return summarizeBalances((data ?? []) as Array<Pick<Debt, 'creditor_id' | 'debtor_id' | 'amount' | 'amount_paid' | 'status' | 'currency'>>)
+        const rows = await queryDocs<DebtDoc>('debts', where('group_id', '==', groupId))
+        return summarizeBalances(normalizeDebts(rows as Debt[]))
     },
 }
 

@@ -4,13 +4,13 @@ Use this template when asking another model/agent to implement something in The 
 
 ## Prompt
 
-Project: The Appden (React + TS + Supabase)
+Project: The Appden (React + TS + Firebase + Cloudflare R2)
 
 Required context files to read first:
 
 1. `agent-context/APP_CONTEXT.md`
 2. `agent-context/REPO_MAP.md`
-3. `agent-context/SUPABASE_CONTEXT.md`
+3. `agent-context/FIREBASE_CONTEXT.md`
 4. `agent-context/FEATURE_STATUS_1_43.md`
 5. `agent-context/CHAT_CONTEXT.md`
 

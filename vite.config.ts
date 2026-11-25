@@ -46,13 +46,13 @@ export default defineConfig({
                 skipWaiting: true,
                 runtimeCaching: [
                     {
-                        // Covers and avatars (R2 Worker or Supabase Storage). The signature in the query string
+                        // Covers and avatars from the R2 Worker. The signature in the query string
                         // changes daily, so match ignoring it: the same image is never downloaded twice.
                         // CORS-mode requests (colour extraction) are left to the network to avoid opaque-response clashes.
                         urlPattern: ({ url, request }: { url: URL; request: Request }) =>
                             request.destination === 'image' &&
                             request.mode !== 'cors' &&
-                            /^\/(f\/|storage\/v1\/object\/sign\/)(covers|avatars)\//.test(url.pathname),
+                            /^\/f\/(covers|avatars)\//.test(url.pathname),
                         handler: 'CacheFirst',
                         options: {
                             cacheName: 'appden-images',
@@ -62,25 +62,9 @@ export default defineConfig({
                         },
                     },
                     {
-                        // Never cache auth/session endpoints.
-                        urlPattern: /^https:\/\/.*\.supabase\.co\/auth\/v1\/.*/i,
+                        // Firebase Auth and Firestore must always hit the network.
+                        urlPattern: /^https:\/\/(firestore|identitytoolkit|securetoken)\.googleapis\.com\/.*/i,
                         handler: 'NetworkOnly',
-                    },
-                    {
-                        // Signed storage URLs expire quickly; serving stale cache breaks playback/covers.
-                        urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/sign\/.*/i,
-                        handler: 'NetworkOnly',
-                    },
-                    {
-                        urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
-                        handler: 'NetworkFirst',
-                        options: {
-                            cacheName: 'supabase-cache',
-                            expiration: {
-                                maxEntries: 100,
-                                maxAgeSeconds: 60 * 60 * 24, // 24 hours
-                            },
-                        },
                     },
                 ],
                 // The application shell must handle navigations. Using
@@ -112,7 +96,7 @@ export default defineConfig({
             output: {
                 manualChunks: {
                     react: ['react', 'react-dom', 'react-router-dom'],
-                    supabase: ['@supabase/supabase-js'],
+                    firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
                     forms: ['react-hook-form', '@hookform/resolvers', 'zod'],
                     query: ['@tanstack/react-query'],
                     motion: ['framer-motion'],

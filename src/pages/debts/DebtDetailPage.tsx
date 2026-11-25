@@ -40,7 +40,6 @@ const DebtDetailPage: React.FC = () => {
         mutationFn: (data: PaymentFormData) =>
             debtsService.registerPayment(debt!, userId!, { amount: data.amount, note: data.note || null, receiptFile }),
         onSuccess: (result) => {
-            if (result.historySkipped) warning('Pago aplicado', 'No se guardó en el historial: falta la migración 017 en Supabase.')
             if (result.receiptFailed) warning('Pago registrado sin justificante', 'No se pudo subir la imagen.')
             void queryClient.invalidateQueries({ queryKey: ['debt', debtId] })
             void queryClient.invalidateQueries({ queryKey: ['debts', groupId] })

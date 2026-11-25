@@ -1,5 +1,5 @@
 // ============================================================
-// CORE DATABASE TYPES (mirrors Supabase schema)
+// CORE DATA TYPES (Firestore documents keep these field names)
 // ============================================================
 
 // -- Enums --
@@ -29,14 +29,13 @@ export type NotificationType =
 // -- Profile --
 
 export interface Profile {
-    id: string // = auth.user.id
+    id: string
     display_name: string
     username: string | null
     avatar_url: string | null
     bio: string | null
     created_at: string
     updated_at: string
-    // If present and false, the user must be approved by an admin before using the app
     is_approved?: boolean
 }
 
@@ -48,6 +47,7 @@ export interface Group {
     description: string | null
     avatar_url: string | null
     created_by: string
+    member_ids: string[]
     is_private?: boolean
     created_at: string
     updated_at: string

@@ -30,7 +30,7 @@
 
 ### PWA Enhancements
 - ✅ **offline.html**: Beautiful offline fallback page with retry logic
-- ✅ **Service Worker**: Configured to cache Supabase requests
+- ✅ **Service Worker**: Configured to cache app assets and R2 images
 - ✅ **Manifest**: Complete PWA manifest with icons and metadata
 
 ### Navigation & Routing
@@ -81,7 +81,7 @@
    - Users can't access other users' data
    - Group membership strictly validated
 
-2. **Authentication**: Supabase Auth with email/password
+2. **Authentication**: Firebase Auth with email/password and Google
    - Session persistence
    - Password reset via email
    - Protected routes
@@ -106,7 +106,7 @@ The application is now feature-complete for MVP Phase 5:
 - Optimized for mobile and desktop
 
 ### Next Steps for User
-1. Configure Supabase project with credentials
+1. Firebase project `appdenski` (defaults already in the code)
 2. Run SQL migrations to setup database
 3. Create storage buckets
 4. Install dependencies and run locally

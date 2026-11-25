@@ -5,7 +5,7 @@ Review this PR for The Appden with a bug-risk and regression-first mindset.
 Read context first:
 
 - `agent-context/APP_CONTEXT.md`
-- `agent-context/SUPABASE_CONTEXT.md`
+- `agent-context/FIREBASE_CONTEXT.md`
 - `agent-context/FEATURE_STATUS_1_43.md`
 
 Review priorities:

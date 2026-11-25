@@ -19,13 +19,16 @@ Everything is encrypted, private by default, and installable as a PWA on mobile 
 
 ## 🏗️ Architecture
 
-### Tech Stack
+### Tech Stack (100% free tier)
 
 - **Frontend**: React 18 + TypeScript + Vite
 - **Styling**: Tailwind CSS
-- **State Management**: Zustand (global state) + React Router (navigation)
+- **State Management**: Zustand (global state) + TanStack Query (server data) + React Router
 - **Forms**: React Hook Form + Zod validation
-- **Backend**: Supabase (PostgreSQL + Auth + Storage)
+- **Auth**: Firebase Authentication (email/password and Google), project `appdenski`
+- **Database**: Cloud Firestore (`eur3`), protected by `firestore.rules`
+- **Files**: Cloudflare R2 behind the `appden-storage` Worker (`r2-worker/`), signed URLs
+- **Hosting**: Vercel (automatic deploys from `main`)
 - **PWA**: vite-plugin-pwa + Service Worker
 - **Icons**: lucide-react
 
@@ -33,46 +36,24 @@ Everything is encrypted, private by default, and installable as a PWA on mobile 
 
 ```
 the-appden/
-├── public/
-│   ├── manifest.json          # PWA manifest
-│   ├── offline.html           # Offline fallback page
-│   └── icons/                 # App icons for PWA
+├── public/                    # PWA manifest, icons, offline page
 ├── src/
-│   ├── app/
-│   │   ├── router/            # React Router configuration
-│   │   ├── providers/         # Auth provider & context
-│   │   └── store/             # Zustand state management
-│   ├── components/
-│   │   ├── common/            # Reusable components (Avatar, ProtectedRoute)
-│   │   ├── layout/            # Layout (AppLayout, Navigation)
-│   │   ├── ui/                # UI components (Toast, ConfirmDialog, etc.)
-│   │   ├── music/             # Music components (Player, Cards)
-│   │   ├── playlists/         # Playlist components
-│   │   ├── debts/             # Debt components
-│   │   ├── groups/            # Group management components
-│   │   ├── files/             # File sharing components
-│   │   └── share/             # Sharing utilities
-│   ├── features/              # Feature-specific logic (if needed)
+│   ├── app/                   # Router, providers (AuthProvider), Zustand stores
+│   ├── components/            # Reusable UI, layout, music, groups, share…
+│   ├── features/              # Feature modules (player, social, debts, reports…)
 │   ├── hooks/                 # Custom React hooks
 │   ├── lib/
-│   │   ├── supabase/          # Supabase client & config
-│   │   ├── utils/             # Utility functions
-│   │   ├── validators/        # Zod validation schemas
-│   │   └── constants/         # App constants
-│   ├── pages/                 # Page components
-│   ├── services/              # API/business logic services
-│   ├── types/                 # TypeScript interfaces
-│   ├── main.tsx               # App entry point
-│   └── App.tsx                # Root component
-├── supabase/
-│   └── migrations/
-│       └── 001_initial_schema.sql  # Complete database schema + RLS
-├── vite.config.ts
-├── tailwind.config.js
-├── tsconfig.json
-├── package.json
-├── .env.example
-└── README.md
+│   │   ├── firebase/          # Firebase app, auth, Firestore helpers, R2 signed URLs
+│   │   ├── storage/r2.ts      # R2 Worker client (upload, delete, batched signing)
+│   │   ├── utils/  validators/  constants/
+│   ├── pages/                 # Route pages
+│   ├── services/              # Data access (Firestore + R2)
+│   └── types/                 # TypeScript interfaces
+├── r2-worker/                 # Cloudflare Worker for R2 (validates Firebase ID tokens)
+├── firebase.json  .firebaserc # Firebase CLI config
+├── firestore.rules            # Security rules (who can read/write what)
+├── firestore.indexes.json     # Composite indexes
+└── vite.config.ts
 ```
 
 ## 📦 Installation
@@ -80,49 +61,32 @@ the-appden/
 ### Prerequisites
 
 - Node.js 18+
-- npm or yarn
-- A Supabase project (free tier works)
+- Firebase CLI (`npm i -g firebase-tools`) only to deploy rules
+- Access to the Firebase project `appdenski` and the Cloudflare account (only to deploy)
 
 ### Local Setup
 
-1. **Clone and install**:
+1. **Install**:
    ```bash
-   cd the-appden
    npm install
    ```
 
-2. **Create `.env.local`** (copy from `.env.example`):
-   ```bash
-   cp .env.example .env.local
-   ```
-
-3. **Configure Supabase credentials** in `.env.local`:
-   ```
-   VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-   VITE_SUPABASE_ANON_KEY=YOUR_ANON_KEY
-   ```
-
-4. **Run Supabase migrations**:
-   - Open your Supabase dashboard
-   - Go to SQL Editor
-   - Copy and run the entire `supabase/migrations/001_initial_schema.sql` file
-   - This creates all tables, indexes, triggers, enums, and RLS policies
-
-5. **Configure Storage Buckets** in Supabase:
-   - Go to **Storage** in your Supabase dashboard
-   - Create these buckets (make them **private**):
-     - `avatars`
-     - `covers`
-     - `songs`
-     - `files`
-   - Note: Files are secured via Row Level Security (RLS) policies
-
-6. **Start development server**:
+2. **Start the dev server**:
    ```bash
    npm run dev
    ```
-   - Open http://127.0.0.1:4173
-   - Register a new account to test
+   Open http://127.0.0.1:4173. The production Firebase project and R2 Worker are the defaults
+   (their web config is public by design); override them with `VITE_FIREBASE_*` /
+   `VITE_STORAGE_URL` in `.env.local` to point at another project.
+
+3. **Deploy changes outside the frontend** (when you touch them):
+   ```bash
+   npm run firebase:rules   # firestore.rules + firestore.indexes.json
+   npm run storage:deploy   # r2-worker
+   ```
+
+New accounts start **pending approval**: an app admin (`admins/{uid}` in Firestore) approves them
+from the app. Add or remove admins from the Firebase console.
 
 ## Team Workflow
 
@@ -134,64 +98,33 @@ For multi-dev collaboration, read:
 - `docs/ONBOARDING.md`
 - `docs/PROJECT_STRUCTURE.md`
 
-## 🗄️ Database Schema
+## 🗄️ Data Model (Firestore)
 
-### Main Tables
+Flat collections with the same field names as the types in `src/types` (see `docs/MIGRACION_FIREBASE.md`).
 
-| Table | Purpose |
+| Collection | Purpose |
 |-------|---------|
-| `profiles` | User profiles (display name, avatar, bio) |
-| `groups` | Friend groups (containers for collaborative data) |
-| `group_members` | Group membership with roles (owner/member) |
-| `songs` | Audio files with metadata (title, artist, duration) |
-| `favorites` | User's favorite songs |
-| `playlists` | Collaborative playlists |
-| `playlist_songs` | Songs in playlists with ordering |
-| `debts` | Debt records between users |
-| `debt_payments` | Payment history for debts |
-| `files` | Shared files (images, documents) |
-| `shared_links` | Public/private shareable links with expiry |
-| `notifications` | In-app notifications (for future real-time push) |
+| `profiles/{uid}` | User profiles (display name, avatar, bio, `is_approved`) |
+| `admins/{uid}`, `account_requests/{uid}` | App admins and sign-up approvals |
+| `groups/{id}` | Groups, with `member_ids` for "my groups" queries and rules |
+| `group_members/{groupId}_{uid}` | Membership with role (owner/admin/member) |
+| `group_invitations`, `group_invite_tokens` | Invitations and invite links |
+| `friend_requests`, `friendships` | Global friendships |
+| `songs`, `albums`, `playlists`, `playlist_songs`, `favorites` | Music (files in R2) |
+| `song_comments`, `song_likes`, `song_reactions`, `song_lyrics*` | Music social and lyrics |
+| `debts`, `debt_payments`, `debt_*`, `group_goals`, `user_badges` | Debts and their extras |
+| `posts`, `notifications`, `group_activity`, `reports` | Feed, notifications, activity, reports |
 
-### Key Features
-
-- **RLS Policies**: All tables have Row Level Security enabled
-  - Users can only access data from groups they're members of
-  - Creditors/debtors can see relevant debts
-  - Uploader can delete their own files
-  - See `001_initial_schema.sql` for complete policies
-
-- **Auto-Updated Fields**: `created_at`, `updated_at` via triggers
-
-- **Enums**: `group_role`, `debt_status`, `debt_currency`, etc.
-
-- **Indexes**: For performance on frequently filtered columns
+Group-scoped documents carry `group_id`; queries always filter by it so the rules can verify membership.
 
 ## 🔐 Security
 
-### Authentication
-
-- Email/password registration via Supabase Auth
-- Session persistence (automatic)
-- Password reset via email
-- Protected routes (AuthProvider + ProtectedRoute)
-
-### Authorization
-
-- **Row Level Security (RLS)**: Enforced at the database level
-  - No group data leaks between groups
-  - Users can't access others' files/playlists/debts outside their group
-  - Shared links validate access before revealing content
-
-- **Storage Policies**: Files are private by default
-  - Access controlled via Supabase Storage policies
-
-### Best Practices
-
-- All sensitive operations go through the backend
-- No tokens stored in localStorage (handled by Supabase)
-- HTTPS enforced in production
-- CORS configured in Supabase dashboard
+- **Authentication**: Firebase Auth (email/password, Google), password reset by email, protected routes.
+- **Authorization**: `firestore.rules` replaces the old row-level security: group data is only visible
+  to members, debts only editable by their parties, notifications only by their recipient, etc.
+- **Files**: private in R2. The Worker checks the Firebase ID token, only signs URLs for files of
+  your groups and only accepts uploads under your own user folder.
+- Never commit secrets: `.env.local` is git-ignored.
 
 ## 🎵 Music Player
 
@@ -245,46 +178,11 @@ Features:
 
 ## 🚀 Deployment
 
-### Vercel (Recommended)
-
-1. Push to GitHub:
-   ```bash
-   git init
-   git add .
-   git commit -m "initial commit"
-   git remote add origin https://github.com/YOUR_USERNAME/the-appden
-   git push -u origin main
-   ```
-
-2. Connect to Vercel:
-   - Go to https://vercel.com
-   - Import your GitHub repository
-   - Add environment variables (`.env.local` contents)
-   - Deploy
-
-3. Configure domain (optional):
-   - In Vercel dashboard, add your custom domain
-
-### Docker
-
-1. Build image:
-   ```bash
-   docker build -t the-appden .
-   ```
-
-2. Run container:
-   ```bash
-   docker run -p 3000:80 the-appden
-   ```
-
-### Self-Hosted
-
-Build and serve the static files:
-```bash
-npm run build
-# dist/ folder contains the built app
-# Serve dist/ with any web server (nginx, Apache, etc.)
-```
+- **Frontend**: every push to `main` deploys to Vercel (`https://the-appden.vercel.app`).
+- **Firestore rules/indexes**: `npm run firebase:rules`.
+- **R2 Worker**: `npm run storage:deploy` (secret `SIGNING_SECRET` set with `wrangler secret put`).
+- New domains must be added to Firebase → Authentication → Settings → Authorized domains and to
+  `ALLOWED_ORIGINS` in `r2-worker/wrangler.toml`.
 
 ## 📚 API Services
 
@@ -348,11 +246,11 @@ npm run lint      # Run ESLint
 
 ### Environment Variables
 
-See `.env.example` for required variables:
+All optional (defaults point at production):
 
 ```
-VITE_SUPABASE_URL           # Supabase project URL
-VITE_SUPABASE_ANON_KEY      # Supabase anonimous API key
+VITE_FIREBASE_API_KEY / _AUTH_DOMAIN / _PROJECT_ID / _APP_ID / _MESSAGING_SENDER_ID
+VITE_STORAGE_URL            # R2 Worker URL
 ```
 
 ### TypeScript
@@ -368,17 +266,15 @@ Strict mode enabled via `tsconfig.json`:
 - Check Node version: `node --version` (should be 18+)
 - Check port 4173 is free or update Vite config
 
-### "CORS error" on Supabase calls
-- In Supabase dashboard → Project Settings → API → CORS settings
-- Add your local domain (e.g., `http://127.0.0.1:4173`)
+### "auth/unauthorized-domain" with Google
+- Add the domain in Firebase → Authentication → Settings → Authorized domains
 
-### "Auth fails" on registration
-- Check `.env.local` has correct `VITE_SUPABASE_URL` and key
-- Confirm user creation isn't hitting email verification (check Supabase docs)
+### "Missing or insufficient permissions"
+- A Firestore rule rejected the request: check `firestore.rules` and that the query filters by `group_id`
 
 ### Songs won't play
 - Check browser console for CORS errors
-- Confirm storage bucket is created and has RLS policies
+- Check the R2 Worker is deployed and the domain is in `ALLOWED_ORIGINS`
 - Verify audio file format (mp3, wav, etc.)
 
 ### PWA won't install
@@ -388,7 +284,8 @@ Strict mode enabled via `tsconfig.json`:
 
 ## 📖 Additional Resources
 
-- [Supabase Docs](https://supabase.com/docs)
+- [Firebase Docs](https://firebase.google.com/docs)
+- [Cloudflare R2](https://developers.cloudflare.com/r2/)
 - [React Documentation](https://react.dev)
 - [Tailwind CSS](https://tailwindcss.com)
 - [Zustand Store](https://github.com/pmndrs/zustand)
@@ -429,7 +326,7 @@ Strict mode enabled via `tsconfig.json`:
 - [x] Group Management pages
 - [x] PWA offline support
 - [x] Audio duration extraction
-- [x] RLS policies complete
+- [x] Firestore security rules
 
 ## 🚦 What's Next (Future Enhancements)
 
@@ -450,7 +347,7 @@ Strict mode enabled via `tsconfig.json`:
 For issues:
 1. Check the troubleshooting section above
 2. Review browser console for errors
-3. Check Supabase dashboard for database errors
+3. Check the Firebase console (Firestore, Authentication) for errors
 4. Create an issue with details and steps to reproduce
 
 ## 📝 License
@@ -461,4 +358,4 @@ MIT License - feel free to use this for personal or commercial projects.
 
 **Built with 🎵 & ☕ for private friend groups.**
 
-Made with React, Supabase, and lots of coffee ☕
+Made with React, Firebase, Cloudflare R2 and lots of coffee ☕

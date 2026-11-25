@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { MailCheck, UserPlus } from 'lucide-react'
-import { authService } from '@services/auth.service'
+import { authErrorMessage, authService } from '@services/auth.service'
+import { GoogleButton } from '@components/layout/GoogleButton'
 import { registerSchema, type RegisterFormData } from '@lib/validators'
 import { useToast } from '@components/ui/Toast'
 import { AuthShell, PasswordInput } from '@components/layout/AuthShell'
@@ -12,7 +13,8 @@ import { ROUTES } from '@lib/constants'
 const RegisterPage: React.FC = () => {
     const { error: toastError } = useToast()
     const [registeredEmail, setRegisteredEmail] = useState<string | null>(null)
-    const [needsConfirmation, setNeedsConfirmation] = useState(true)
+    const [isGoogleLoading, setIsGoogleLoading] = useState(false)
+    const navigate = useNavigate()
 
     const {
         register,
@@ -22,44 +24,30 @@ const RegisterPage: React.FC = () => {
 
     const onSubmit = async (data: RegisterFormData) => {
         try {
-            const result = await authService.register(data.email.trim(), data.password, data.display_name.trim())
-            // Supabase returns a user without identities when the email is already registered
-            // (it hides that fact to avoid account enumeration).
-            if (result.user && Array.isArray(result.user.identities) && result.user.identities.length === 0) {
-                toastError('Ese email ya tiene cuenta', 'Inicia sesión o recupera la contraseña.')
-                return
-            }
-            setNeedsConfirmation(!result.session)
+            await authService.register(data.email.trim(), data.password, data.display_name.trim())
             setRegisteredEmail(data.email.trim())
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'Error al registrarse'
-            const lower = msg.toLowerCase()
-            if (lower.includes('already registered')) {
-                toastError('Ese email ya tiene cuenta', 'Inicia sesión o recupera la contraseña.')
-            } else if (lower.includes('database error saving new user')) {
-                // Typical when migration 013's account-request trigger fails (see migration 015).
-                toastError('El servidor no pudo crear tu perfil', 'Avisa al administrador: falta aplicar la migración 015 en Supabase.')
-            } else if (lower.includes('rate limit') || lower.includes('security purposes')) {
-                toastError('Demasiados intentos', 'Espera un minuto y vuelve a probar.')
-            } else if (lower.includes('failed to fetch') || lower.includes('network') || lower.includes('timeout')) {
-                toastError('Sin conexión', 'No pudimos contactar con el servidor.')
-            } else if (lower.includes('password')) {
-                toastError('Contraseña no válida', msg)
-            } else {
-                toastError('No se pudo crear la cuenta', msg)
-            }
+            toastError('No se pudo crear la cuenta', authErrorMessage(err))
+        }
+    }
+
+    const handleGoogle = async () => {
+        setIsGoogleLoading(true)
+        try {
+            await authService.loginWithGoogle()
+            navigate(ROUTES.LOGIN, { replace: true })
+        } catch (err: unknown) {
+            toastError('No se pudo entrar con Google', authErrorMessage(err))
+        } finally {
+            setIsGoogleLoading(false)
         }
     }
 
     if (registeredEmail) {
         return (
             <AuthShell
-                title={needsConfirmation ? 'Confirma tu email' : '¡Cuenta creada!'}
-                subtitle={
-                    needsConfirmation
-                        ? `Te hemos enviado un enlace a ${registeredEmail}. Ábrelo para activar la cuenta.`
-                        : 'Ya puedes entrar.'
-                }
+                title="¡Cuenta creada!"
+                subtitle={`Has creado la cuenta ${registeredEmail}.`}
                 footer={
                     <Link to={ROUTES.LOGIN} className="font-semibold text-brand-300">
                         Ir a iniciar sesión
@@ -69,7 +57,7 @@ const RegisterPage: React.FC = () => {
                 <div className="card flex items-start gap-3 p-4">
                     <MailCheck className="mt-0.5 h-6 w-6 shrink-0 text-brand-300" />
                     <p className="text-sm leading-relaxed text-gray-300">
-                        Si el grupo usa aprobación de cuentas, un administrador tendrá que aceptarte antes de que puedas entrar. Te avisaremos al iniciar sesión.
+                        Un administrador tiene que aprobarla antes de que puedas entrar. Prueba a iniciar sesión más tarde.
                     </p>
                 </div>
             </AuthShell>
@@ -141,6 +129,8 @@ const RegisterPage: React.FC = () => {
                     )}
                 </button>
             </form>
+
+            <GoogleButton onClick={handleGoogle} loading={isGoogleLoading} label="Registrarse con Google" />
         </AuthShell>
     )
 }
